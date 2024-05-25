@@ -42,9 +42,6 @@ based systems! So stuff like Tor relays or Tor exit nodes, won't work. And if yo
 applications or application features won't work either, like Discords voice chat. But on casual webservers or similar, it works
 perfectly fine (I'm running it on multiple servers perfectly fine).
 
-Applications that try to use their own DNS server (regardless of using pure DNS, DoT or DoH) won't work properly. If this plugin
-(so CoreDNS) doesn't process that DNS response, the corresponding IP is not an allowed destination.
-
 Additionally, at the moment, this plugin only supports nftables. It's build in a way to support multiple backends in the future,
 but I've only implemented nftables for now, as it's the default Linux firewall interface nowadays.
 
