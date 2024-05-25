@@ -494,7 +494,7 @@ func NewNFTablesManager(config parsedCondig) (*NFTablesManager, error) {
 		ipv6AllowSet:   nil,
 		syncChannel:    make(chan *allowRoute, 100),
 		allowList:      make(map[string]*allowRoute),
-		allowRoutePool: sync.Pool{New: func() any { return &allowRoute{} }},
+		allowRoutePool: sync.Pool{New: func() interface{} { return &allowRoute{} }},
 	}
 
 	if err := manager.prepareNFTables(config); err != nil {
