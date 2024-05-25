@@ -12,37 +12,37 @@ So this plugin:
 * Creates firewall rules that block all outgoing traffic (except explicitly allowed IPs/subnets)
 * Observes all DNS responses for A and AAAA requests, adding the returned IPs as exceptions to your firewall
 * Cleans up the firewall after TTL (Time To Live) plus some margin of the DNS cache entry expires (existing connections
-will not get cut of, only new connections get denied)
+will not get cut off, only new connections get denied)
 * Allows DHCP and IPv6 neighbor discovery to not break your connectivity
 
-That way your system can only connect to other systems, which get allowed by your DNS provider.
+That way, your system can only connect to other systems, which are allowed by your DNS provider.
 
 ## Use Case
 
-A firewall managed by DNS acts as additional layer of security for your systems. Especially on servers or autonomous systems
+A firewall managed by DNS acts as an additional layer of security for your systems. Especially on servers or autonomous systems
 (machines, IoT and similar) the destinations are limited to a set of domains you want to connect to. You can either provide a
-fixed set of domains by any of CoreDNS' other plugins, limiting the reachable destinations quite a lot, or use a security
-focused upstream DNS like [Quad9](https://quad9.net/) and prevent your system from connecting to any known malicious system
+fixed set of domains by any other CoreDNS plugin, limiting the reachable destinations quite a lot, or use a security-focused
+upstream DNS like [Quad9](https://quad9.net/) and prevent your system from connecting to any known malicious system
 in case an intruder tries to execute a malicious loader.
 
 ## Bonus
 
-This plugins has a second mode, where it doesn't control the firewalls output, but the firewalls forward chain. This allows
-linux based gateways to use its firewall to limit outgoing traffic for the whole network.
+This plugins has a second mode, where it doesn't control the firewall's output, but the firewall's forward chain. This allows
+Linux-based gateways to use their firewall to limit outgoing traffic for the whole network.
 
 > [!WARNING]
-> This is implemented but currently not tested properly!
+> The gateway usage implementation is not properly tested!
 
 ## Limitations
 
 This plugin blocks connections to all unknown IPs. If you don't add IPs/subnets to the general allow-list or don't perform a
-DNS lookup with that IP as result, you can't connect. This works for most stuff, but doesn't wor for other, like Peer-to-Peer
-based systems! So stuff like Tor-relays or Tor-exitnodes, won't work. And if you try to use this on your desktop, some
-applications or application features won't work either, like Discords voicechat. But on casual webservers or similar, it works
+DNS lookup with that IP as result, you can't connect. This works for most stuff, but doesn't for other, like peer-to-peer
+based systems! So stuff like Tor relays or Tor exit nodes, won't work. And if you try to use this on your desktop, some
+applications or application features won't work either, like Discords voice chat. But on casual webservers or similar, it works
 perfectly fine (I'm running it on multiple servers perfectly fine).
 
-Additionally, at the moment this plugin only supports nftables. It's build in a way to support multiple backends in the future,
-but I've only implemented nftables for now, as it's the default linux firewall interface nowadays.
+Additionally, at the moment, this plugin only supports nftables. It's build in a way to support multiple backends in the future,
+but I've only implemented nftables for now, as it's the default Linux firewall interface nowadays.
 
 ## Usage
 
@@ -63,8 +63,8 @@ Where:
 - **MODE** is either `nft-local` or `nft-gateway`. Both values tell this plugin to use nftables, but `nft-local` tells it to
 use the output chain (so limit local connections), while `nft-gateway` tells it to use the forward chain (so limit forwarding
 connections).
-- **...IP-ALLOWLIST** is a list of IPs or CIDRs defining IPs or subnets, that are allowed by default, without any prior DNS
-request. You usually want to add at least your upstream DNS server, that's used by the *forward* plugin.
+- **...IP-ALLOWLIST** is a list of IPs or CIDRs defining IPs or subnets that are allowed by default without any prior DNS
+request. You usually want to add at least your upstream DNS server, which's used by the *forward* plugin.
 
 Exampe:
 
@@ -79,13 +79,15 @@ For a complete Corefile example see *deployment/Corefile*.
 
 ## Future work
 
-This plugin works and I'm using it on multiple systems, so for me it's fine, but there's still more to do, or even
+This plugin works, and I'm using it on multiple systems, so for me, it's fine, but there's still more to do, or even
 more ideas to implement:
 
-- Add more unittests. Currently there are not a lot of them, and it would help to make sure future changes don't
+- Add more unittests. Currently, there are not a lot of them, and it would help to make sure future changes don't
 break anything.
-- Implement an iptables backend. Even though iptables is "legacy" it might be worth to implement, as some people
+- Implement an iptables backend. Even though iptables is "legacy", it might be worth implementing, as some people
 still use it.
-- Maybe implement other, interesting firewall integrations, like bpfilter or a BSD firewall maybe?
+- Maybe implement other interesting firewall integrations, like bpfilter or BSD firewall?
 - Experiment with routing instead of firewalls. A friend gave me the idea to use BGP to publish allowed routes via
 BGP to routers and null-route every other IP.
+- Implement the rest of Microsoft's Zero Trust DNS. This includes local DNSSEC validation, DoH and mutual authentication
+(client certificates) with the DNS server.
