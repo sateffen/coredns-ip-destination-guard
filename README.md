@@ -22,8 +22,9 @@ That way, your system can only connect to other systems, which are allowed by yo
 A firewall managed by DNS acts as an additional layer of security for your systems. Especially on servers or autonomous systems
 (machines, IoT and similar) the destinations are limited to a set of domains you want to connect to. You can either provide a
 fixed set of domains by any other CoreDNS plugin, limiting the reachable destinations quite a lot, or use a security-focused
-upstream DNS like [Quad9](https://quad9.net/) and prevent your system from connecting to any known malicious system
-in case an intruder tries to execute a malicious loader.
+upstream DNS like [Quad9](https://quad9.net/) and prevent your system from connecting to any known malicious system in case an
+intruder tries to execute a malicious loader. This works even if such a malicious loader tries to use its own DNS (regardless
+of pure DNS, DoT or DoH), because if this plugin (so CoreDNS) doesn't process that DNS response, that IP is not allowed.
 
 ## Bonus
 
@@ -40,6 +41,9 @@ DNS lookup with that IP as result, you can't connect. This works for most stuff,
 based systems! So stuff like Tor relays or Tor exit nodes, won't work. And if you try to use this on your desktop, some
 applications or application features won't work either, like Discords voice chat. But on casual webservers or similar, it works
 perfectly fine (I'm running it on multiple servers perfectly fine).
+
+Applications that try to use their own DNS server (regardless of using pure DNS, DoT or DoH) won't work properly. If this plugin
+(so CoreDNS) doesn't process that DNS response, the corresponding IP is not an allowed destination.
 
 Additionally, at the moment, this plugin only supports nftables. It's build in a way to support multiple backends in the future,
 but I've only implemented nftables for now, as it's the default Linux firewall interface nowadays.
@@ -91,3 +95,5 @@ still use it.
 BGP to routers and null-route every other IP.
 - Implement the rest of Microsoft's Zero Trust DNS. This includes local DNSSEC validation, DoH and mutual authentication
 (client certificates) with the DNS server.
+- Explore the direction of tracking DNS requests or connections by application, allowing for an even finer-grained
+control of destinations.
