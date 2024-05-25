@@ -1,0 +1,17 @@
+.:53 {
+        bind lo
+
+        acl {
+                allow net 127.0.0.1/24
+                block
+        }
+        
+        ipdestinationguard nft-local 9.9.9.9 149.112.112.112
+        forward . tls://9.9.9.9 tls://149.112.112.112 {
+                tls_servername dns.quad9.net
+        }
+        cache
+        cancel
+        errors
+        prometheus :9153
+}
