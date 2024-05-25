@@ -17,6 +17,11 @@ will not get cut off, only new connections get denied)
 
 That way, your system can only connect to other systems, which are allowed by your DNS provider.
 
+The name IP destination guard is a word play on the IP source guard feature available in decent access layer switches: IP
+source guard uses DHCP snooping to track assigned IP addresses and only allows traffic from these source addresses, therefore
+blocking malicious source addresses. IP destination guard is the inverse: it uses what could be called "DNS snooping" to track
+all resolved IP addresses and only allows traffic to these addresses, while blocking all connections to any other destination.
+
 ## Use Case
 
 A firewall managed by DNS acts as an additional layer of security for your systems. Especially on servers or autonomous systems
