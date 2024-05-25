@@ -88,6 +88,7 @@ more ideas to implement:
 
 - Add more unittests. Currently, there are not a lot of them, and it would help to make sure future changes don't
 break anything.
+- Add metrics, like counting the currently allowed routes.
 - Implement an iptables backend. Even though iptables is "legacy", it might be worth implementing, as some people
 still use it.
 - Maybe implement other interesting firewall integrations, like bpfilter or BSD firewall?
