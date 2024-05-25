@@ -1,0 +1,6 @@
+.*
+
+deployment/coredns-repo/
+deployment/coredns
+
+!.gitignore
