@@ -40,13 +40,13 @@ func (manager *NFTablesManager) AddRoute(ip net.IP, ttl uint32) {
 
 func (manager *NFTablesManager) prepareNFTables(config parsedCondig) error {
 	targetTable := nftables.Table{
-		Name:   "coredns",
+		Name:   "coredns-ip-destination-guard",
 		Family: nftables.TableFamilyINet,
 	}
 
 	targetChainPolicy := nftables.ChainPolicyDrop
 	targetChain := nftables.Chain{
-		Name:     "corednsoutput",
+		Name:     "output",
 		Table:    &targetTable,
 		Type:     nftables.ChainTypeFilter,
 		Hooknum:  nftables.ChainHookOutput,
@@ -55,19 +55,19 @@ func (manager *NFTablesManager) prepareNFTables(config parsedCondig) error {
 	}
 
 	if config.mode == "gateway" {
-		targetChain.Name = "corednsforward"
+		targetChain.Name = "forward"
 		targetChain.Hooknum = nftables.ChainHookForward
 	}
 
 	manager.ipv4AllowSet = &nftables.Set{
-		Name:    "corednsipv4allowlist",
+		Name:    "ipv4allowlist",
 		Table:   &targetTable,
 		Dynamic: true,
 		KeyType: nftables.TypeIPAddr,
 	}
 
 	manager.ipv6AllowSet = &nftables.Set{
-		Name:    "corednsipv6allowlist",
+		Name:    "ipv6allowlist",
 		Table:   &targetTable,
 		Dynamic: true,
 		KeyType: nftables.TypeIP6Addr,
@@ -492,7 +492,7 @@ func NewNFTablesManager(config parsedCondig) (*NFTablesManager, error) {
 		nlInterface:    nlInterface,
 		ipv4AllowSet:   nil,
 		ipv6AllowSet:   nil,
-		syncChannel:    make(chan *allowRoute, 100),
+		syncChannel:    make(chan *allowRoute),
 		allowList:      make(map[string]*allowRoute),
 		allowRoutePool: sync.Pool{New: func() interface{} { return &allowRoute{} }},
 	}
