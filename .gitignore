@@ -1,6 +1,12 @@
 .*
 
-deployment/coredns-repo/
-deployment/coredns
+archlinux/pkg
+archlinux/src
+archlinux/*.tar.gz
+archlinux/*.pkg.tar.zst
+
+genericbuild/src
+genericbuild/*.tar.gz
+genericbuild/coredns-ip-destination-guard
 
 !.gitignore

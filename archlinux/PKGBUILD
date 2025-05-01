@@ -1,0 +1,48 @@
+# based on: https://aur.archlinux.org/cgit/aur.git/tree/PKGBUILD?h=coredns
+pkgname=coredns-ip-destination-guard
+pkgver=1.12.1
+pkgrel=1
+pkgdesc="CoreDNS IP-Destination-Guard DNS server"
+depends=('nftables')
+makedepends=('go' 'make')
+arch=('i686' 'pentium4' 'x86_64' 'arm' 'armv7h' 'armv6h' 'aarch64')
+url="https://github.com/sateffen/coredns-ip-destination-guard"
+license=('MIT')
+source=(coredns-${pkgver}.tar.gz::https://github.com/coredns/coredns/archive/v${pkgver}.tar.gz
+  coredns-ip-destination-guard.service
+  Corefile
+  plugin.cfg)
+
+sha256sums=('665b2096611b960572b40ad7e943e9c6cca58da5f3885e148868578b15fbf8ef'
+  'fb1bea91836e4edc9a5d20c2478944a4ce46e0fdb7ea174d207a191571d9615f'
+  'ebaebb5e01cbb0a2ec0fba8d823ad4db58bdd5dca6ac2ed7d93af89c0177956d'
+  'cb6abe403b070a30778a8710ce2cd6f6998f0f011bf19bd6fe430cc807cc4898')
+
+prepare() {
+  export GOPATH="$srcdir/build"
+  export GOFLAGS="-buildmode=pie -trimpath -ldflags=-linkmode=external -mod=readonly -modcacherw"
+
+  cd "coredns-$pkgver"
+  go mod download
+}
+
+build() {
+  export GOPATH="$srcdir/build"
+  # export PATH=$GOPATH/bin:$PATH
+  export CGO_CPPFLAGS="${CPPFLAGS}"
+  export CGO_CFLAGS="${CFLAGS}"
+  export CGO_CXXFLAGS="${CXXFLAGS}"
+  export CGO_LDFLAGS="${LDFLAGS}"
+  export GOFLAGS="-buildmode=pie -trimpath -ldflags=-linkmode=external -mod=readonly -modcacherw"
+
+  cp plugin.cfg "coredns-$pkgver"
+
+  cd "coredns-$pkgver"
+  make coredns
+}
+
+package() {
+  install -Dm755 "$srcdir/coredns-$pkgver/coredns" "$pkgdir/usr/bin/coredns-ip-destination-guard"
+  install -Dm644 "$srcdir/coredns-ip-destination-guard.service" "$pkgdir/usr/lib/systemd/system/coredns-ip-destination-guard.service"
+  install -Dm644 "$srcdir/Corefile" "$pkgdir/etc/coredns-ip-destination-guard/Corefile"
+}
