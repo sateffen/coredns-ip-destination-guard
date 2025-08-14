@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 
 # Configure the version to use here.
-corednsVersion=1.12.2
+corednsVersion=1.12.3
 
 ###############################################################################################
 # Below this is the actual build. Don't change anything, if you don't know what you are doing #
