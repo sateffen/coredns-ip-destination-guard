@@ -12,7 +12,7 @@ import (
 // A basic interface that allows abstraction for different destination-guard-managers,
 // like IPTables or BGP based ones
 type DestinationGuardManager interface {
-	AddRoute(ip net.IP, ttl uint32)
+	AddRoutes(ips []net.IP, ttl uint32)
 }
 
 // The actual destination guard struct for this plugin.

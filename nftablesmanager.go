@@ -23,19 +23,29 @@ type NFTablesManager struct {
 	nlInterface    *nftables.Conn
 	ipv4AllowSet   *nftables.Set
 	ipv6AllowSet   *nftables.Set
-	syncChannel    chan *allowRoute
+	syncChannel    chan []*allowRoute
 	allowList      map[string]*allowRoute
 	allowRoutePool sync.Pool
 }
 
-// Add given IP for ttl+30 seconds to the allow traffic to it.
-func (manager *NFTablesManager) AddRoute(ip net.IP, ttl uint32) {
-	newEntry := manager.allowRoutePool.Get().(*allowRoute)
+// Add given IPs for ttl+30 seconds to the allow traffic to them.
+func (manager *NFTablesManager) AddRoutes(ips []net.IP, ttl uint32) {
+	if len(ips) == 0 {
+		return
+	}
 
-	newEntry.ipAddress = ip
-	newEntry.validUnitl = time.Now().Add(time.Duration(ttl+30) * time.Second)
+	validUntil := time.Now().Add(time.Duration(ttl+30) * time.Second)
+	batch := make([]*allowRoute, 0, len(ips))
 
-	manager.syncChannel <- newEntry
+	for _, ip := range ips {
+		newEntry := manager.allowRoutePool.Get().(*allowRoute)
+		newEntry.ipAddress = ip
+		newEntry.validUnitl = validUntil
+
+		batch = append(batch, newEntry)
+	}
+
+	manager.syncChannel <- batch
 }
 
 func (manager *NFTablesManager) prepareNFTables(config parsedCondig) error {
@@ -411,37 +421,48 @@ func (manager *NFTablesManager) manageAllowList() {
 
 	for {
 		select {
-		case newEntry := <-manager.syncChannel:
-			ipAsString := newEntry.ipAddress.String()
-			existingRoute, exists := manager.allowList[ipAsString]
+		case newBatch := <-manager.syncChannel:
+			var ipv4ToAdd []nftables.SetElement
+			var ipv6ToAdd []nftables.SetElement
 
-			if exists {
-				if existingRoute.validUnitl.Before(newEntry.validUnitl) {
-					existingRoute.validUnitl = newEntry.validUnitl
+			for _, newEntry := range newBatch {
+				ipAsString := newEntry.ipAddress.String()
+				existingRoute, exists := manager.allowList[ipAsString]
+
+				if exists {
+					if existingRoute.validUnitl.Before(newEntry.validUnitl) {
+						existingRoute.validUnitl = newEntry.validUnitl
+					}
+					manager.allowRoutePool.Put(newEntry)
+					continue
 				}
 
-				manager.allowRoutePool.Put(newEntry)
-				continue
+				if len(newEntry.ipAddress) == net.IPv4len {
+					ipv4ToAdd = append(ipv4ToAdd, nftables.SetElement{Key: newEntry.ipAddress})
+				} else if len(newEntry.ipAddress) == net.IPv6len {
+					ipv6ToAdd = append(ipv6ToAdd, nftables.SetElement{Key: newEntry.ipAddress})
+				} else {
+					log.Errorf("Received invalid ip address: %v", newEntry.ipAddress)
+					manager.allowRoutePool.Put(newEntry)
+					continue
+				}
+
+				manager.allowList[ipAsString] = newEntry
 			}
 
-			var targetSet *nftables.Set
-
-			if len(newEntry.ipAddress) == net.IPv4len {
-				targetSet = manager.ipv4AllowSet
-			} else if len(newEntry.ipAddress) == net.IPv6len {
-				targetSet = manager.ipv6AllowSet
-			} else {
-				log.Errorf("Received invalid ip address: %v", newEntry.ipAddress)
-				continue
+			if len(ipv4ToAdd) > 0 {
+				manager.nlInterface.SetAddElements(manager.ipv4AllowSet, ipv4ToAdd)
 			}
 
-			manager.nlInterface.SetAddElements(targetSet, []nftables.SetElement{{Key: newEntry.ipAddress}})
-			if err := manager.nlInterface.Flush(); err != nil {
-				log.Errorf("Writing to NFTables failed: %v", err)
-				continue
+			if len(ipv6ToAdd) > 0 {
+				manager.nlInterface.SetAddElements(manager.ipv6AllowSet, ipv6ToAdd)
 			}
 
-			manager.allowList[ipAsString] = newEntry
+			if len(ipv4ToAdd) > 0 || len(ipv6ToAdd) > 0 {
+				if err := manager.nlInterface.Flush(); err != nil {
+					log.Errorf("Writing to NFTables failed: %v", err)
+				}
+			}
 
 		case <-gcTicker.C:
 			var ipv4ToDelete []nftables.SetElement
@@ -470,7 +491,7 @@ func (manager *NFTablesManager) manageAllowList() {
 				manager.nlInterface.SetDeleteElements(manager.ipv6AllowSet, ipv6ToDelete)
 			}
 
-			if len(ipv4ToDelete) > 0 && len(ipv6ToDelete) > 0 {
+			if len(ipv4ToDelete) > 0 || len(ipv6ToDelete) > 0 {
 				if err := manager.nlInterface.Flush(); err != nil {
 					log.Errorf("Writing to NFTables failed (lists might be out of sync): %v", err)
 				}
@@ -492,7 +513,7 @@ func NewNFTablesManager(config parsedCondig) (*NFTablesManager, error) {
 		nlInterface:    nlInterface,
 		ipv4AllowSet:   nil,
 		ipv6AllowSet:   nil,
-		syncChannel:    make(chan *allowRoute),
+		syncChannel:    make(chan []*allowRoute),
 		allowList:      make(map[string]*allowRoute),
 		allowRoutePool: sync.Pool{New: func() interface{} { return &allowRoute{} }},
 	}
