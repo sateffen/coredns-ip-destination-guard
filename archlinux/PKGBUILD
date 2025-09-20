@@ -1,6 +1,6 @@
 # based on: https://aur.archlinux.org/cgit/aur.git/tree/PKGBUILD?h=coredns
 pkgname=coredns-ip-destination-guard
-pkgver=1.12.3
+pkgver=1.12.4
 pkgrel=1
 pkgdesc="CoreDNS IP-Destination-Guard DNS server"
 depends=('nftables')
@@ -8,12 +8,13 @@ makedepends=('go' 'make')
 arch=('i686' 'pentium4' 'x86_64' 'arm' 'armv7h' 'armv6h' 'aarch64')
 url="https://github.com/sateffen/coredns-ip-destination-guard"
 license=('MIT')
+backup=('etc/coredns-ip-destination-guard/Corefile')
 source=(coredns-${pkgver}.tar.gz::https://github.com/coredns/coredns/archive/v${pkgver}.tar.gz
   coredns-ip-destination-guard.service
   Corefile
   plugin.cfg)
 
-sha256sums=('c39141ee571561fc88e260e59bb97a1fb309048c9b2a936895a320bf202b2878'
+sha256sums=('39713a5bfd6fd1a2df1caa7a8296c4327e48c51e964c83d5fea4ed3a5ba4df9f'
   '2b42e692f37925388d7bb8b5c30cf20b35f634ed3478c6c81b2a4c3e19ec20d1'
   'ebaebb5e01cbb0a2ec0fba8d823ad4db58bdd5dca6ac2ed7d93af89c0177956d'
   'cb6abe403b070a30778a8710ce2cd6f6998f0f011bf19bd6fe430cc807cc4898')
@@ -45,4 +46,6 @@ package() {
   install -Dm755 "$srcdir/coredns-$pkgver/coredns" "$pkgdir/usr/bin/coredns-ip-destination-guard"
   install -Dm644 "$srcdir/coredns-ip-destination-guard.service" "$pkgdir/usr/lib/systemd/system/coredns-ip-destination-guard.service"
   install -Dm644 "$srcdir/Corefile" "$pkgdir/etc/coredns-ip-destination-guard/Corefile"
+  install -Dm644 "$srcdir/build/pkg/mod/github.com/sateffen/coredns-ip-destination-guard@"*"/LICENSE" "$pkgdir/usr/share/licenses/$pkgname/LICENSE"
+  install -Dm644 "$srcdir/coredns-$pkgver/LICENSE" "$pkgdir/usr/share/licenses/$pkgname/LICENSE-coredns"
 }
