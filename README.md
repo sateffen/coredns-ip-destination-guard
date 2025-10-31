@@ -53,7 +53,7 @@ but I've only implemented nftables for now, as it's the default Linux firewall i
 ## Usage
 
 > [!NOTE]
-> I tested this plugin with CoreDNS version 1.12, which is the most recent version currently.
+> I tested this plugin with CoreDNS version 1.13, which is the most recent version currently.
 
 To use this plugin, you first need a CoreDNS version, which contains this plugin. To make it easy for you, I've added
 the *genericbuild* folder, containing a buildscript as well as instructions for building your own CoreDNS version.
