@@ -96,12 +96,14 @@ func TestGetIPRange(t *testing.T) {
 
 func TestParseConfig(t *testing.T) {
 	tests := []struct {
-		name            string
-		input           string
-		expectedMode    Mode
-		expectedIPCount int // number of IPs (including start/end pairs)
-		shouldError     bool
-		errorContains   string
+		name                    string
+		input                   string
+		expectedMode            Mode
+		expectedIPCount         int // number of IPs in allowedIPs (including start/end pairs)
+		expectedLocalIPCount    int // number of IPs in allowedLocalIPs
+		expectedGatewayIPCount  int // number of IPs in allowedGatewayIPs
+		shouldError             bool
+		errorContains           string
 	}{
 		// Legacy single-line format tests
 		{
@@ -136,6 +138,13 @@ func TestParseConfig(t *testing.T) {
 			name:            "single-line with IPv6",
 			input:           "ipdestinationguard nft-gateway fe80::1",
 			expectedMode:    "nft-gateway",
+			expectedIPCount: 2,
+			shouldError:     false,
+		},
+		{
+			name:            "single-line with nft-both mode",
+			input:           "ipdestinationguard nft-both 192.168.1.1",
+			expectedMode:    "nft-both",
 			expectedIPCount: 2,
 			shouldError:     false,
 		},
@@ -207,6 +216,69 @@ func TestParseConfig(t *testing.T) {
 			expectedMode:    "nft-local",
 			expectedIPCount: 4,
 			shouldError:     false,
+		},
+		{
+			name: "block with nft-both mode",
+			input: `ipdestinationguard {
+				mode nft-both
+				allowedIPs 192.168.1.1 10.0.0.0/24
+			}`,
+			expectedMode:    "nft-both",
+			expectedIPCount: 4,
+			shouldError:     false,
+		},
+		{
+			name: "block with allowedLocalIPs",
+			input: `ipdestinationguard {
+				mode nft-local
+				allowedIPs 9.9.9.9
+				allowedLocalIPs 10.88.0.0/16
+			}`,
+			expectedMode:           "nft-local",
+			expectedIPCount:        2,
+			expectedLocalIPCount:   2,
+			expectedGatewayIPCount: 0,
+			shouldError:            false,
+		},
+		{
+			name: "block with allowedGatewayIPs",
+			input: `ipdestinationguard {
+				mode nft-gateway
+				allowedIPs 9.9.9.9
+				allowedGatewayIPs 192.168.100.0/24
+			}`,
+			expectedMode:           "nft-gateway",
+			expectedIPCount:        2,
+			expectedLocalIPCount:   0,
+			expectedGatewayIPCount: 2,
+			shouldError:            false,
+		},
+		{
+			name: "block with nft-both and all IP types",
+			input: `ipdestinationguard {
+				mode nft-both
+				allowedIPs 9.9.9.9 149.112.112.112
+				allowedLocalIPs 10.88.0.0/16
+				allowedGatewayIPs 192.168.100.0/24
+			}`,
+			expectedMode:           "nft-both",
+			expectedIPCount:        4,
+			expectedLocalIPCount:   2,
+			expectedGatewayIPCount: 2,
+			shouldError:            false,
+		},
+		{
+			name: "block with multiple allowedLocalIPs directives",
+			input: `ipdestinationguard {
+				mode nft-local
+				allowedLocalIPs 10.88.0.0/16
+				allowedLocalIPs 172.16.0.0/12
+			}`,
+			expectedMode:           "nft-local",
+			expectedIPCount:        0,
+			expectedLocalIPCount:   4,
+			expectedGatewayIPCount: 0,
+			shouldError:            false,
 		},
 		{
 			name: "empty block",
@@ -300,7 +372,15 @@ func TestParseConfig(t *testing.T) {
 			}
 
 			if len(config.allowedIPs) != tt.expectedIPCount {
-				t.Errorf("Expected %d IPs, got %d", tt.expectedIPCount, len(config.allowedIPs))
+				t.Errorf("Expected %d allowedIPs, got %d", tt.expectedIPCount, len(config.allowedIPs))
+			}
+
+			if len(config.allowedLocalIPs) != tt.expectedLocalIPCount {
+				t.Errorf("Expected %d allowedLocalIPs, got %d", tt.expectedLocalIPCount, len(config.allowedLocalIPs))
+			}
+
+			if len(config.allowedGatewayIPs) != tt.expectedGatewayIPCount {
+				t.Errorf("Expected %d allowedGatewayIPs, got %d", tt.expectedGatewayIPCount, len(config.allowedGatewayIPs))
 			}
 		})
 	}
@@ -337,6 +417,14 @@ func TestValidateConfig(t *testing.T) {
 					net.ParseIP("192.168.1.1"),
 					net.ParseIP("192.168.1.2"),
 				},
+			},
+			shouldError: false,
+		},
+		{
+			name: "valid nft-both mode",
+			config: &parsedConfig{
+				mode:       ModeNFTBoth,
+				allowedIPs: []net.IP{},
 			},
 			shouldError: false,
 		},

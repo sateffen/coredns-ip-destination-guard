@@ -72,9 +72,10 @@ ipdestinationguard [MODE] [...IP-ALLOWLIST]
 
 Where:
 
-- **MODE** is either `nft-local` or `nft-gateway`. Both values tell this plugin to use nftables, but `nft-local` tells it to
-use the output chain (so limit local connections), while `nft-gateway` tells it to use the forward chain (so limit forwarding
-connections).
+- **MODE** is one of `nft-local`, `nft-gateway`, or `nft-both`:
+  - `nft-local` - Uses the OUTPUT chain to limit local connections (assuming you want to manage this device)
+  - `nft-gateway` - Uses the FORWARD chain to limit forwarding connections (assuming your device acts as gateway)
+  - `nft-both` - Uses both OUTPUT and FORWARD (combine the others into one)
 - **...IP-ALLOWLIST** is a list of IPs or CIDRs defining IPs or subnets that are allowed by default without any prior DNS
 request. You usually want to add at least your upstream DNS server, which's used by the *forward* plugin.
 
@@ -94,11 +95,20 @@ For better readability, especially with longer configurations, you can use the b
 ```
 ipdestinationguard {
   mode [MODE]
-  allowedIPs [...IP-ALLOWLIST]
+  allowedIPs [...IP-ALLOWLIST]           # Applied to all chains
+  allowedLocalIPs [...IP-ALLOWLIST]      # Applied only to OUTPUT chain (nft-local)
+  allowedGatewayIPs [...IP-ALLOWLIST]    # Applied only to FORWARD chain (nft-gateway)
 }
 ```
 
-Example:
+**Directives:**
+- **allowedIPs** - Applied to all chains regardless of mode (common IPs like DNS servers)
+- **allowedLocalIPs** - Additional IPs only for OUTPUT chain (local applications)
+- **allowedGatewayIPs** - Additional IPs only for FORWARD chain (forwarded traffic)
+
+The lists are **additive** - a chain receives both `allowedIPs` and its specific directive.
+
+Example with all directives:
 
 ```
 ipdestinationguard {
@@ -107,21 +117,37 @@ ipdestinationguard {
 }
 ```
 
-You can also use multiple `allowedIPs` directives for better organization:
+You can also use multiple directives for better organization:
 
 ```
 ipdestinationguard {
   mode nft-local
-  # Quad9 DNS servers
+  # Quad9 DNS servers (needed by all)
   allowedIPs 9.9.9.9 149.112.112.112
-  # Local container network
-  allowedIPs 10.88.0.0/16
+  # Local container network (only local apps need this)
+  allowedLocalIPs 10.88.0.0/16
   # IPv6 addresses
   allowedIPs 2620:fe::fe 2620:fe::9
 }
 ```
 
-For a complete Corefile example see *deployment/Corefile*.
+For systems that act as both gateway and run local services, use `nft-both` mode with chain-specific IPs:
+
+```
+ipdestinationguard {
+  mode nft-both
+  # DNS servers for everyone
+  allowedIPs 9.9.9.9 149.112.112.112
+  # Local container network (only OUTPUT chain)
+  allowedLocalIPs 10.88.0.0/16
+  # Guest network being forwarded (only FORWARD chain)
+  allowedGatewayIPs 192.168.100.0/24
+}
+```
+
+This applies Zero Trust DNS filtering to both local connections and forwarded traffic.
+
+For a Corefile example see *genericbuild/Corefile*.
 
 ## Future work
 

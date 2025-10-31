@@ -54,21 +54,11 @@ func (manager *NFTablesManager) prepareNFTables(config *parsedConfig) error {
 		Family: nftables.TableFamilyINet,
 	}
 
-	targetChainPolicy := nftables.ChainPolicyDrop
-	targetChain := nftables.Chain{
-		Name:     "output",
-		Table:    &targetTable,
-		Type:     nftables.ChainTypeFilter,
-		Hooknum:  nftables.ChainHookOutput,
-		Priority: nftables.ChainPriorityFilter,
-		Policy:   &targetChainPolicy,
-	}
+	// Create the table and flush it
+	manager.nlInterface.AddTable(&targetTable)
+	manager.nlInterface.FlushTable(&targetTable)
 
-	if config.mode == ModeNFTGateway {
-		targetChain.Name = "forward"
-		targetChain.Hooknum = nftables.ChainHookForward
-	}
-
+	// Create shared IPv4/IPv6 sets
 	manager.ipv4AllowSet = &nftables.Set{
 		Name:    "ipv4allowlist",
 		Table:   &targetTable,
@@ -83,15 +73,70 @@ func (manager *NFTablesManager) prepareNFTables(config *parsedConfig) error {
 		KeyType: nftables.TypeIP6Addr,
 	}
 
-	manager.nlInterface.AddTable(&targetTable)
-	manager.nlInterface.FlushTable(&targetTable)
-	manager.nlInterface.AddChain(&targetChain)
 	manager.nlInterface.AddSet(manager.ipv4AllowSet, []nftables.SetElement{})
 	manager.nlInterface.AddSet(manager.ipv6AllowSet, []nftables.SetElement{})
 
+	// Determine which chains to create based on mode
+	var chainsToCreate []struct {
+		name      string
+		chainHook *nftables.ChainHook
+	}
+
+	switch config.mode {
+	case ModeNFTLocal:
+		chainsToCreate = []struct {
+			name      string
+			chainHook *nftables.ChainHook
+		}{
+			{"output", nftables.ChainHookOutput},
+		}
+	case ModeNFTGateway:
+		chainsToCreate = []struct {
+			name      string
+			chainHook *nftables.ChainHook
+		}{
+			{"forward", nftables.ChainHookForward},
+		}
+	case ModeNFTBoth:
+		chainsToCreate = []struct {
+			name      string
+			chainHook *nftables.ChainHook
+		}{
+			{"output", nftables.ChainHookOutput},
+			{"forward", nftables.ChainHookForward},
+		}
+	}
+
+	// Create all required chains and add rules
+	for _, chainSpec := range chainsToCreate {
+		targetChainPolicy := nftables.ChainPolicyDrop
+		targetChain := nftables.Chain{
+			Name:     chainSpec.name,
+			Table:    &targetTable,
+			Type:     nftables.ChainTypeFilter,
+			Hooknum:  chainSpec.chainHook,
+			Priority: nftables.ChainPriorityFilter,
+			Policy:   &targetChainPolicy,
+		}
+		manager.nlInterface.AddChain(&targetChain)
+
+		// Add all rules to this chain
+		if err := manager.addChainRules(&targetTable, &targetChain, chainSpec.name, config); err != nil {
+			return err
+		}
+	}
+
+	return manager.nlInterface.Flush()
+}
+
+// addChainRules adds all filtering rules to a specific chain
+func (manager *NFTablesManager) addChainRules(targetTable *nftables.Table, targetChain *nftables.Chain, chainName string, config *parsedConfig) error {
+	// Prepare permanent allow sets from config
+	// Start with common allowedIPs (applied to all chains)
 	ipv4PermanentAllowSetElements := []nftables.SetElement{{Key: make([]byte, 4), IntervalEnd: true}}
 	ipv6PermanentAllowSetElements := []nftables.SetElement{{Key: make([]byte, 16), IntervalEnd: true}}
 
+	// Add common allowedIPs
 	for i := 0; i < len(config.allowedIPs); i += 2 {
 		key := config.allowedIPs[i]
 		keyEnd := config.allowedIPs[i+1]
@@ -105,10 +150,31 @@ func (manager *NFTablesManager) prepareNFTables(config *parsedConfig) error {
 		}
 	}
 
+	// Add chain-specific IPs
+	var chainSpecificIPs []net.IP
+	if chainName == "output" && len(config.allowedLocalIPs) > 0 {
+		chainSpecificIPs = config.allowedLocalIPs
+	} else if chainName == "forward" && len(config.allowedGatewayIPs) > 0 {
+		chainSpecificIPs = config.allowedGatewayIPs
+	}
+
+	for i := 0; i < len(chainSpecificIPs); i += 2 {
+		key := chainSpecificIPs[i]
+		keyEnd := chainSpecificIPs[i+1]
+
+		if len(key) == net.IPv4len {
+			ipv4PermanentAllowSetElements = append(ipv4PermanentAllowSetElements, nftables.SetElement{Key: key, IntervalEnd: false})
+			ipv4PermanentAllowSetElements = append(ipv4PermanentAllowSetElements, nftables.SetElement{Key: keyEnd, IntervalEnd: true})
+		} else {
+			ipv6PermanentAllowSetElements = append(ipv6PermanentAllowSetElements, nftables.SetElement{Key: key, IntervalEnd: false})
+			ipv6PermanentAllowSetElements = append(ipv6PermanentAllowSetElements, nftables.SetElement{Key: keyEnd, IntervalEnd: true})
+		}
+	}
+
 	// region drop ct invalid traffc
 	manager.nlInterface.AddRule(&nftables.Rule{
-		Table: &targetTable,
-		Chain: &targetChain,
+		Table: targetTable,
+		Chain: targetChain,
 		Exprs: []expr.Any{
 			&expr.Ct{
 				Key:      expr.CtKeySTATE,
@@ -135,8 +201,8 @@ func (manager *NFTablesManager) prepareNFTables(config *parsedConfig) error {
 
 	// region accept ct establised or related traffc
 	manager.nlInterface.AddRule(&nftables.Rule{
-		Table: &targetTable,
-		Chain: &targetChain,
+		Table: targetTable,
+		Chain: targetChain,
 		Exprs: []expr.Any{
 			&expr.Ct{
 				Key:      expr.CtKeySTATE,
@@ -163,8 +229,8 @@ func (manager *NFTablesManager) prepareNFTables(config *parsedConfig) error {
 
 	// region accept localhost traffic
 	manager.nlInterface.AddRule(&nftables.Rule{
-		Table: &targetTable,
-		Chain: &targetChain,
+		Table: targetTable,
+		Chain: targetChain,
 		Exprs: []expr.Any{
 			&expr.Meta{
 				Key:      expr.MetaKeyOIF,
@@ -184,7 +250,7 @@ func (manager *NFTablesManager) prepareNFTables(config *parsedConfig) error {
 
 	// region allow necessary ICMPv6
 	icmpv6TypeAllowSet := nftables.Set{
-		Table:     &targetTable,
+		Table:     targetTable,
 		Anonymous: true,
 		Constant:  true,
 		KeyType:   nftables.TypeICMP6Type,
@@ -196,8 +262,8 @@ func (manager *NFTablesManager) prepareNFTables(config *parsedConfig) error {
 		{Key: []byte{0x88}}, // nd-neighbor-advert  = 0x88
 	})
 	manager.nlInterface.AddRule(&nftables.Rule{
-		Table: &targetTable,
-		Chain: &targetChain,
+		Table: targetTable,
+		Chain: targetChain,
 		Exprs: []expr.Any{
 			&expr.Meta{
 				Key:      expr.MetaKeyL4PROTO,
@@ -230,7 +296,7 @@ func (manager *NFTablesManager) prepareNFTables(config *parsedConfig) error {
 	// region allow permanent allowlisted ipv4 traffic
 	if len(ipv4PermanentAllowSetElements) > 1 {
 		ipv4PermanentAllowSet := nftables.Set{
-			Table:     &targetTable,
+			Table:     targetTable,
 			Anonymous: true,
 			Constant:  true,
 			Interval:  true,
@@ -238,8 +304,8 @@ func (manager *NFTablesManager) prepareNFTables(config *parsedConfig) error {
 		}
 		manager.nlInterface.AddSet(&ipv4PermanentAllowSet, ipv4PermanentAllowSetElements)
 		manager.nlInterface.AddRule(&nftables.Rule{
-			Table: &targetTable,
-			Chain: &targetChain,
+			Table: targetTable,
+			Chain: targetChain,
 			Exprs: []expr.Any{
 				&expr.Meta{
 					Key:      expr.MetaKeyNFPROTO,
@@ -273,7 +339,7 @@ func (manager *NFTablesManager) prepareNFTables(config *parsedConfig) error {
 	// region allow permanent allowlisted ipv6 traffic
 	if len(ipv6PermanentAllowSetElements) > 1 {
 		ipv6PermanentAllowSet := nftables.Set{
-			Table:     &targetTable,
+			Table:     targetTable,
 			Anonymous: true,
 			Constant:  true,
 			Interval:  true,
@@ -281,8 +347,8 @@ func (manager *NFTablesManager) prepareNFTables(config *parsedConfig) error {
 		}
 		manager.nlInterface.AddSet(&ipv6PermanentAllowSet, ipv6PermanentAllowSetElements)
 		manager.nlInterface.AddRule(&nftables.Rule{
-			Table: &targetTable,
-			Chain: &targetChain,
+			Table: targetTable,
+			Chain: targetChain,
 			Exprs: []expr.Any{
 				&expr.Meta{
 					Key:      expr.MetaKeyNFPROTO,
@@ -315,8 +381,8 @@ func (manager *NFTablesManager) prepareNFTables(config *parsedConfig) error {
 
 	// region allow temporary allowlisted ipv4 traffic
 	manager.nlInterface.AddRule(&nftables.Rule{
-		Table: &targetTable,
-		Chain: &targetChain,
+		Table: targetTable,
+		Chain: targetChain,
 		Exprs: []expr.Any{
 			&expr.Meta{
 				Key:      expr.MetaKeyNFPROTO,
@@ -348,8 +414,8 @@ func (manager *NFTablesManager) prepareNFTables(config *parsedConfig) error {
 
 	// region allow temporary allowlisted ipv6 traffic
 	manager.nlInterface.AddRule(&nftables.Rule{
-		Table: &targetTable,
-		Chain: &targetChain,
+		Table: targetTable,
+		Chain: targetChain,
 		Exprs: []expr.Any{
 			&expr.Meta{
 				Key:      expr.MetaKeyNFPROTO,
@@ -381,8 +447,8 @@ func (manager *NFTablesManager) prepareNFTables(config *parsedConfig) error {
 
 	// region reject all other traffic
 	manager.nlInterface.AddRule(&nftables.Rule{
-		Table: &targetTable,
-		Chain: &targetChain,
+		Table: targetTable,
+		Chain: targetChain,
 		Exprs: []expr.Any{
 			&expr.Reject{
 				Type: 0x2, // icmpx
@@ -392,7 +458,7 @@ func (manager *NFTablesManager) prepareNFTables(config *parsedConfig) error {
 	})
 	// endregion
 
-	return manager.nlInterface.Flush()
+	return nil
 }
 
 // Reads all SetElements for given set and adds them to the local allowList.

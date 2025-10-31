@@ -18,11 +18,14 @@ type Mode string
 const (
 	ModeNFTLocal   Mode = "nft-local"
 	ModeNFTGateway Mode = "nft-gateway"
+	ModeNFTBoth    Mode = "nft-both"
 )
 
 type parsedConfig struct {
-	mode       Mode
-	allowedIPs []net.IP
+	mode              Mode
+	allowedIPs        []net.IP // Applied to all chains
+	allowedLocalIPs   []net.IP // Applied only to OUTPUT chain (nft-local)
+	allowedGatewayIPs []net.IP // Applied only to FORWARD chain (nft-gateway)
 }
 
 // define a named logger for nice logging.
@@ -70,8 +73,10 @@ func setup(c *caddy.Controller) error {
 //     }
 func parseConfig(c *caddy.Controller) (*parsedConfig, error) {
 	config := &parsedConfig{
-		mode:       "", // Empty string = invalid, will fail validation
-		allowedIPs: make([]net.IP, 0, 4),
+		mode:              "", // Empty string = invalid, will fail validation
+		allowedIPs:        make([]net.IP, 0, 4),
+		allowedLocalIPs:   make([]net.IP, 0, 4),
+		allowedGatewayIPs: make([]net.IP, 0, 4),
 	}
 
 	// Check for single-line format
@@ -121,6 +126,38 @@ func parseConfig(c *caddy.Controller) (*parsedConfig, error) {
 				config.allowedIPs = append(config.allowedIPs, endIP)
 			}
 
+		case "allowedLocalIPs":
+			args := c.RemainingArgs()
+			if len(args) == 0 {
+				return nil, c.Errf("allowedLocalIPs directive requires at least one IP address or CIDR")
+			}
+
+			for _, ipString := range args {
+				startIP, endIP, err := getIPRange(ipString)
+				if err != nil {
+					return nil, err
+				}
+
+				config.allowedLocalIPs = append(config.allowedLocalIPs, startIP)
+				config.allowedLocalIPs = append(config.allowedLocalIPs, endIP)
+			}
+
+		case "allowedGatewayIPs":
+			args := c.RemainingArgs()
+			if len(args) == 0 {
+				return nil, c.Errf("allowedGatewayIPs directive requires at least one IP address or CIDR")
+			}
+
+			for _, ipString := range args {
+				startIP, endIP, err := getIPRange(ipString)
+				if err != nil {
+					return nil, err
+				}
+
+				config.allowedGatewayIPs = append(config.allowedGatewayIPs, startIP)
+				config.allowedGatewayIPs = append(config.allowedGatewayIPs, endIP)
+			}
+
 		default:
 			return nil, c.Errf("unknown directive '%s'", directive)
 		}
@@ -130,14 +167,23 @@ func parseConfig(c *caddy.Controller) (*parsedConfig, error) {
 }
 
 // validateConfig validates the parsed configuration for business logic rules.
-// It checks that the mode is one of the supported values.
+// It checks that the mode is one of the supported values and warns about mismatched directives.
 func validateConfig(config *parsedConfig) error {
 	if config.mode == "" {
 		return fmt.Errorf("mode is required")
 	}
 
-	if config.mode != ModeNFTLocal && config.mode != ModeNFTGateway {
-		return fmt.Errorf("invalid mode '%s': must be '%s' or '%s'", config.mode, ModeNFTLocal, ModeNFTGateway)
+	if config.mode != ModeNFTLocal && config.mode != ModeNFTGateway && config.mode != ModeNFTBoth {
+		return fmt.Errorf("invalid mode '%s': must be '%s', '%s', or '%s'", config.mode, ModeNFTLocal, ModeNFTGateway, ModeNFTBoth)
+	}
+
+	// Warn about mismatched directives (not an error, just informational)
+	if config.mode == ModeNFTLocal && len(config.allowedGatewayIPs) > 0 {
+		log.Warningf("allowedGatewayIPs configured but mode is nft-local; these IPs will be ignored")
+	}
+
+	if config.mode == ModeNFTGateway && len(config.allowedLocalIPs) > 0 {
+		log.Warningf("allowedLocalIPs configured but mode is nft-gateway; these IPs will be ignored")
 	}
 
 	return nil
