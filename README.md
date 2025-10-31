@@ -60,7 +60,11 @@ the *genericbuild* folder, containing a buildscript as well as instructions for 
 
 Bonus: If you are on archlinux, you can use the *archlinux* folder to build a complete package for installation.
 
-In your Corefile, you have to use this plugin using this signature:
+### Configuration
+
+The plugin supports two configuration formats: single-line (legacy) and block format.
+
+#### Single-line format
 
 ```
 ipdestinationguard [MODE] [...IP-ALLOWLIST]
@@ -74,13 +78,47 @@ connections).
 - **...IP-ALLOWLIST** is a list of IPs or CIDRs defining IPs or subnets that are allowed by default without any prior DNS
 request. You usually want to add at least your upstream DNS server, which's used by the *forward* plugin.
 
-Exampe:
+Example:
 
 ```
 # we add *9.9.9.9* and *149.112.112.112* as these are the IPs of quad9
-# and we want to add *10.88.0.0/16* as it's the default network for podman, and the container should read each other
+# and we want to add *10.88.0.0/16* as it's the default network for podman, and the container should reach each other
 # but you can add as many as you want. And yes, IPv6 IPs and CIDRs work as well.
 ipdestinationguard nft-local 9.9.9.9 149.112.112.112 10.88.0.0/16
+```
+
+#### Block format
+
+For better readability, especially with longer configurations, you can use the block format:
+
+```
+ipdestinationguard {
+  mode [MODE]
+  allowedIPs [...IP-ALLOWLIST]
+}
+```
+
+Example:
+
+```
+ipdestinationguard {
+  mode nft-local
+  allowedIPs 9.9.9.9 149.112.112.112 10.88.0.0/16
+}
+```
+
+You can also use multiple `allowedIPs` directives for better organization:
+
+```
+ipdestinationguard {
+  mode nft-local
+  # Quad9 DNS servers
+  allowedIPs 9.9.9.9 149.112.112.112
+  # Local container network
+  allowedIPs 10.88.0.0/16
+  # IPv6 addresses
+  allowedIPs 2620:fe::fe 2620:fe::9
+}
 ```
 
 For a complete Corefile example see *deployment/Corefile*.

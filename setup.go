@@ -11,55 +11,134 @@ import (
 	clog "github.com/coredns/coredns/plugin/pkg/log"
 )
 
-type parsedCondig struct {
-	mode       string
+// Mode represents the operation mode of this plugin.
+type Mode string
+
+// Valid mode constants
+const (
+	ModeNFTLocal   Mode = "nft-local"
+	ModeNFTGateway Mode = "nft-gateway"
+)
+
+type parsedConfig struct {
+	mode       Mode
 	allowedIPs []net.IP
 }
 
-// define a log target for nice logging later on.
+// define a named logger for nice logging.
 var log = clog.NewWithPlugin("ipdestinationguard")
 
 func init() { plugin.Register("ipdestinationguard", setup) }
 
 func setup(c *caddy.Controller) error {
-	c.Next() // returns "ipdestinationguard"
+	// First, skip the first token, which is the plugin name "ipdestinationguard"
+	c.Next()
 
-	allArgs := c.RemainingArgs()
-	config := parsedCondig{
-		mode:       "local",
+	// Second, parse configuration
+	config, err := parseConfig(c)
+	if err != nil {
+		return plugin.Error("ipdestinationguard", err)
+	}
+
+	// Third, validate the parsed configuration
+	err = validateConfig(config)
+	if err != nil {
+		return plugin.Error("ipdestinationguard", err)
+	}
+
+	// The create the manager based on the validated config
+	var dgManager DestinationGuardManager
+	dgManager, err = NewNFTablesManager(config)
+	if err != nil {
+		return plugin.Error("ipdestinationguard", err)
+	}
+
+	// And finally, register plugin with the dnsserver
+	dnsserver.GetConfig(c).AddPlugin(func(next plugin.Handler) plugin.Handler {
+		return IPDestinationGuard{Next: next, DGManager: dgManager}
+	})
+
+	return nil
+}
+
+// parseConfig extracts configuration values from given the Caddy controller.
+// It supports both single-line format (legacy) and block format:
+//   - Single-line: ipdestinationguard nft-local 1.2.3.4 5.6.7.0/24
+//   - Block format: ipdestinationguard {
+//     mode nft-local
+//     allowedIPs 1.2.3.4 5.6.7.0/24
+//     }
+func parseConfig(c *caddy.Controller) (*parsedConfig, error) {
+	config := &parsedConfig{
+		mode:       "", // Empty string = invalid, will fail validation
 		allowedIPs: make([]net.IP, 0, 4),
 	}
 
+	// Check for single-line format
+	allArgs := c.RemainingArgs()
 	if len(allArgs) > 0 {
-		config.mode = allArgs[0]
+		// Single-line format: ipdestinationguard mode cidr1 cidr2 ...
+		config.mode = Mode(allArgs[0])
 
 		for _, ipString := range allArgs[1:] {
 			startIP, endIP, err := getIPRange(ipString)
 			if err != nil {
-				return plugin.Error("ipdestinationguard", err)
+				return nil, err
 			}
 
 			config.allowedIPs = append(config.allowedIPs, startIP)
 			config.allowedIPs = append(config.allowedIPs, endIP)
 		}
+
+		return config, nil
 	}
 
-	var dgManager DestinationGuardManager
-	var err error
+	// Block format parsing
+	for c.NextBlock() {
+		directive := c.Val()
 
-	if config.mode == "nft-local" || config.mode == "nft-gateway" {
-		dgManager, err = NewNFTablesManager(config)
-	} else {
-		return plugin.Error("ipdestinationguard", fmt.Errorf("invalid first argument for \"mode\": \"%s\"", config.mode))
+		switch directive {
+		case "mode":
+			args := c.RemainingArgs()
+			if len(args) != 1 {
+				return nil, c.Errf("mode directive expects exactly one argument, got %d", len(args))
+			}
+			config.mode = Mode(args[0])
+
+		case "allowedIPs":
+			args := c.RemainingArgs()
+			if len(args) == 0 {
+				return nil, c.Errf("allowedIPs directive requires at least one IP address or CIDR")
+			}
+
+			for _, ipString := range args {
+				startIP, endIP, err := getIPRange(ipString)
+				if err != nil {
+					return nil, err
+				}
+
+				config.allowedIPs = append(config.allowedIPs, startIP)
+				config.allowedIPs = append(config.allowedIPs, endIP)
+			}
+
+		default:
+			return nil, c.Errf("unknown directive '%s'", directive)
+		}
 	}
 
-	if err != nil {
-		return plugin.Error("ipdestinationguard", err)
+	return config, nil
+}
+
+// validateConfig validates the parsed configuration for business logic rules.
+// It checks that the mode is one of the supported values.
+func validateConfig(config *parsedConfig) error {
+	if config.mode == "" {
+		return fmt.Errorf("mode is required")
 	}
 
-	dnsserver.GetConfig(c).AddPlugin(func(next plugin.Handler) plugin.Handler {
-		return IPDestinationGuard{Next: next, DGManager: dgManager}
-	})
+	if config.mode != ModeNFTLocal && config.mode != ModeNFTGateway {
+		return fmt.Errorf("invalid mode '%s': must be '%s' or '%s'", config.mode, ModeNFTLocal, ModeNFTGateway)
+	}
 
 	return nil
 }

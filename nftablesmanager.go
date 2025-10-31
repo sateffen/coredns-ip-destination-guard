@@ -48,7 +48,7 @@ func (manager *NFTablesManager) AddRoutes(ips []net.IP, ttl uint32) {
 	manager.syncChannel <- batch
 }
 
-func (manager *NFTablesManager) prepareNFTables(config parsedCondig) error {
+func (manager *NFTablesManager) prepareNFTables(config *parsedConfig) error {
 	targetTable := nftables.Table{
 		Name:   "coredns-ip-destination-guard",
 		Family: nftables.TableFamilyINet,
@@ -64,7 +64,7 @@ func (manager *NFTablesManager) prepareNFTables(config parsedCondig) error {
 		Policy:   &targetChainPolicy,
 	}
 
-	if config.mode == "gateway" {
+	if config.mode == ModeNFTGateway {
 		targetChain.Name = "forward"
 		targetChain.Hooknum = nftables.ChainHookForward
 	}
@@ -500,7 +500,7 @@ func (manager *NFTablesManager) manageAllowList() {
 	}
 }
 
-func NewNFTablesManager(config parsedCondig) (*NFTablesManager, error) {
+func NewNFTablesManager(config *parsedConfig) (*NFTablesManager, error) {
 	nlInterface, err := nftables.New(
 		nftables.AsLasting(),
 	)

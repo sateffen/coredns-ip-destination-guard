@@ -6,7 +6,10 @@
                 block
         }
         
-        ipdestinationguard nft-local 9.9.9.9 149.112.112.112
+        ipdestinationguard  {
+                mode nft-local
+                allowedIPs 9.9.9.9 149.112.112.112
+        }
         forward . tls://9.9.9.9 tls://149.112.112.112 {
                 tls_servername dns.quad9.net
         }
