@@ -9,4 +9,10 @@ genericbuild/src
 genericbuild/*.tar.gz
 genericbuild/coredns-ip-destination-guard
 
+coverage.out
+coverage.html
+
+go.mod
+go.sum
+
 !.gitignore
