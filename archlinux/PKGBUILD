@@ -1,6 +1,6 @@
 # based on: https://aur.archlinux.org/cgit/aur.git/tree/PKGBUILD?h=coredns
 pkgname=coredns-ip-destination-guard
-pkgver=1.13.1
+pkgver=1.13.2
 pkgrel=1
 pkgdesc="CoreDNS IP-Destination-Guard DNS server"
 depends=('nftables')
@@ -14,7 +14,8 @@ source=(coredns-${pkgver}.tar.gz::https://github.com/coredns/coredns/archive/v${
   Corefile
   plugin.cfg)
 
-sha256sums=('13a09a07177fcf341c963b5e4ea20a52483f471e3ced90b5396ea620bfc1d835'
+sha256sums=(
+  '8a9f8729476bdf265d5990dea86c314db778aec2f79d3d47e43607903f7d0b37'
   '2b42e692f37925388d7bb8b5c30cf20b35f634ed3478c6c81b2a4c3e19ec20d1'
   '3039abf35dc2e7a025572bd12c42e4ebbc75366f95db0a3be6581cff89d4ca33'
   'cb6abe403b070a30778a8710ce2cd6f6998f0f011bf19bd6fe430cc807cc4898')
