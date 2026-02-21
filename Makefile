@@ -1,80 +1,111 @@
-.PHONY: help init test test-coverage fmt vet clean genericbuild archlinux
+# Global variables
+PROJECTNAME=coredns-ip-destination-guard
+# Go related variables.
+DISTPATH=dist
+GOFILES=$(shell find . -type f -name '*.go' -not -path './vendor/*')
 
-# Default target
-help:
-	@echo "CoreDNS IP Destination Guard - Makefile targets:"
-	@echo ""
-	@echo "Development:"
-	@echo "  make init          - Initialize development environment (install dependencies)"
-	@echo "  make test          - Run all tests"
-	@echo "  make test-coverage - Run tests with coverage report"
-	@echo "  make fmt           - Format code with gofmt"
-	@echo "  make vet           - Run go vet"
-	@echo "  make clean         - Clean build artifacts and test cache"
-	@echo ""
-	@echo "Building:"
-	@echo "  make genericbuild  - Build CoreDNS with this plugin (generic)"
-	@echo "  make archlinux     - Build Arch Linux package"
-	@echo ""
+.DEFAULT_GOAL := help
+
+## clean: Clean the projects dist folder
+.PHONY: clean
+clean:
+	@echo " > Cleaning dist folder..."
+	@rm -r dist || true
+	@chmod -R +w archlinux/src || true
+	@rm -rf archlinux/src
+	@rm -r archlinux/*.tar.gz || true
+	@rm -r archlinux/*.pkg.tar.zst || true
+	@chmod -R +w genericbuild/src || true
+	@rm -rf genericbuild/src
+	@rm -r genericbuild/*.tar.gz || true
+	@chmod -R +w testbuild/src
+	@rm -rf testbuild/src || true
+	@rm -r testbuild/*.tar.gz || true
+	@rm -r testbuild/coredns || true
+	@echo " > Done..."
 
 # Initialize development environment
 init:
 	@echo "Initializing development environment..."
 	@if [ ! -f go.mod ]; then \
 		echo "Creating go.mod..."; \
-		go mod init github.com/steffenfritz/coredns-ip-destination-guard; \
+		go mod init github.com/sateffen/coredns-ip-destination-guard; \
 	fi
 	@echo "Downloading dependencies..."
 	@go mod tidy
+	@go mod vendor
 	@echo "Done! Run 'make test' to verify everything works."
 
-# Run tests
+## lint: Run the linter on the project
+.PHONY: lint
+lint:
+	@echo " > Running linter..."
+	@golangci-lint run
+
+## test: Run all tests in the project
+.PHONY: test
 test:
-	@echo "Running tests..."
-	@go test -v -race ./...
+	@echo " > Running tests..."
+	@go test -mod=vendor ./...
 
-# Run tests with coverage
-test-coverage:
-	@echo "Running tests with coverage..."
-	@go test -v -race -coverprofile=coverage.out -covermode=atomic ./...
-	@go tool cover -html=coverage.out -o coverage.html
-	@echo "Coverage report generated: coverage.html"
+## build: Build the project
+.PHONY: build
+build: $(DISTPATH)/$(PROJECTNAME)
 
-# Format code
-fmt:
-	@echo "Formatting code..."
-	@gofmt -w -s .
-	@echo "Done!"
+## install-dependencies: Install all necessary dependencies for this project
+.PHONY: install-dependencies
+install-dependencies:
+	@echo " > Installing missing dependencies to cache..."
+	@go mod tidy
+	@echo " > Creating vendor cache..."
+	@go mod vendor
+	@echo " > Done..."
 
-# Run go vet
-vet:
-	@echo "Running go vet..."
-	@go vet ./...
+testbuild/src:
+	@echo " > Preparing testbuild..."
+	@cd testbuild && bash prepare.sh
+	@echo " > Done..."
 
-# Clean build artifacts
-clean:
-	@echo "Cleaning..."
-	@go clean -testcache
-	@rm -f coverage.out coverage.html
-	@rm -f go.mod go.sum
-	@echo "Done!"
+.PHONY: testbuild
+testbuild: GOPATH = testbuild/src/build
+testbuild: GOFLAGS = "-buildmode=pie -trimpath -mod=readonly -modcacherw"
+testbuild: testbuild/src
+	@echo " > Building CoreDNS with ipdestinationguard plugin (this folder)..."
+	@rm testbuild/coredns || true
+	@cd testbuild/src/coredns && make coredns
+	@mv testbuild/src/coredns/coredns testbuild/coredns
+	@echo " > Done..."
 
 # Build CoreDNS with this plugin (generic build)
+.PHONY: genericbuild
 genericbuild:
 	@echo "Building CoreDNS with ipdestinationguard plugin (generic)..."
 	@cd genericbuild && bash build.sh
 	@echo "Build complete! Binary should be in genericbuild/coredns/"
 
 # Build Arch Linux package
+.PHONY: archlinux
 archlinux:
 	@echo "Building Arch Linux package..."
-	@if [ ! -d archlinux ]; then \
-		echo "Error: archlinux directory not found"; \
-		exit 1; \
-	fi
 	@cd archlinux && makepkg -cC
 	@echo "Package built! Check archlinux/ directory for .pkg.tar.zst file"
 
-# Quick check before commit
-check: fmt vet test
-	@echo "All checks passed!"
+.PHONY: help
+help: Makefile
+	@echo
+	@echo "Choose a command run in "$(PROJECTNAME)":"
+	@echo
+	@sed -n 's/^##//p' $< | column -t -s ':' |  sed -e 's/^/ /'
+	@echo
+
+$(DISTPATH)/$(PROJECTNAME): $(GOFILES) go.mod go.sum
+	@echo " > Building binary..."
+	@mkdir -p $(DISTPATH)
+	@go build -mod=vendor -ldflags '-s' -o ./$(DISTPATH)/$(PROJECTNAME) .
+	@echo " > Done... available at $(DISTPATH)/$(PROJECTNAME)"
+
+$(DISTPATH)/$(PROJECTNAME).arm64: $(GOFILES) go.mod go.sum
+	@echo " > Building binary..."
+	@mkdir -p $(DISTPATH)
+	@GOARCH=arm64 go build -mod=vendor -ldflags '-s' -o ./$(DISTPATH)/$(PROJECTNAME).arm64 .
+	@echo " > Done... available at $(DISTPATH)/$(PROJECTNAME).arm64"
