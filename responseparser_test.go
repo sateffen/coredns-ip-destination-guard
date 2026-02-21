@@ -9,10 +9,9 @@ import (
 
 // MockDestinationGuardManager is a mock implementation of DestinationGuardManager for testing
 type MockDestinationGuardManager struct {
-	capturedIPs  []net.IP
-	capturedTTL  uint32
-	callCount    int
-	shouldVerify bool
+	capturedIPs []net.IP
+	capturedTTL uint32
+	callCount   int
 }
 
 func (m *MockDestinationGuardManager) AddRoutes(ips []net.IP, ttl uint32) {
@@ -27,14 +26,14 @@ type MockResponseWriter struct {
 	writeError error
 }
 
-func (m *MockResponseWriter) LocalAddr() net.Addr                { return nil }
-func (m *MockResponseWriter) RemoteAddr() net.Addr               { return nil }
-func (m *MockResponseWriter) WriteMsg(msg *dns.Msg) error        { m.writtenMsg = msg; return m.writeError }
-func (m *MockResponseWriter) Write([]byte) (int, error)          { return 0, nil }
-func (m *MockResponseWriter) Close() error                       { return nil }
-func (m *MockResponseWriter) TsigStatus() error                  { return nil }
-func (m *MockResponseWriter) TsigTimersOnly(bool)                {}
-func (m *MockResponseWriter) Hijack()                            {}
+func (m *MockResponseWriter) LocalAddr() net.Addr         { return nil }
+func (m *MockResponseWriter) RemoteAddr() net.Addr        { return nil }
+func (m *MockResponseWriter) WriteMsg(msg *dns.Msg) error { m.writtenMsg = msg; return m.writeError }
+func (m *MockResponseWriter) Write([]byte) (int, error)   { return 0, nil }
+func (m *MockResponseWriter) Close() error                { return nil }
+func (m *MockResponseWriter) TsigStatus() error           { return nil }
+func (m *MockResponseWriter) TsigTimersOnly(bool)         {}
+func (m *MockResponseWriter) Hijack()                     {}
 
 func TestWriteMsg_WithARecords(t *testing.T) {
 	// Setup

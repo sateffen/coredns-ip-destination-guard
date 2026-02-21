@@ -87,7 +87,7 @@ genericbuild:
 .PHONY: archlinux
 archlinux:
 	@echo "Building Arch Linux package..."
-	@cd archlinux && makepkg -cC
+	@cd archlinux && makepkg
 	@echo "Package built! Check archlinux/ directory for .pkg.tar.zst file"
 
 .PHONY: help

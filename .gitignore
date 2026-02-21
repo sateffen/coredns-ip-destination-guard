@@ -16,6 +16,7 @@ genericbuild/*
 !genericbuild/README.md
 
 testbuild/*
+!testbuild/Corefile
 !testbuild/plugin.cfg
 !testbuild/prepare.sh
 
