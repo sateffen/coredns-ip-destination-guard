@@ -1,0 +1,16 @@
+{
+    "name": "coredns-ip-destination-guard",
+    "dockerComposeFile": "docker-compose.yml",
+    "service": "app",
+    "workspaceFolder": "/workspace",
+    "postStartCommand": "/startup.sh",
+    "waitFor": "postStartCommand",
+    "capAdd": ["NET_ADMIN"],
+    "customizations": {
+        "vscode": {
+            "extensions": [
+                "golang.go"
+            ]
+        }
+    }
+}

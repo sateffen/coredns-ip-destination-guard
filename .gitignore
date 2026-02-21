@@ -1,18 +1,27 @@
 .*
+!.gitignore
+!.devcontainer
 
-archlinux/pkg
-archlinux/src
-archlinux/*.tar.gz
-archlinux/*.pkg.tar.zst
+archlinux/*
+!archlinux/coredns-ip-destination-guard.service
+!archlinux/Corefile
+!archlinux/PKGBUILD
+!archlinux/plugin.cfg
 
-genericbuild/src
-genericbuild/*.tar.gz
-genericbuild/coredns-ip-destination-guard
+genericbuild/*
+!genericbuild/build.sh
+!genericbuild/coredns-ip-destination-guard.service
+!genericbuild/Corefile
+!genericbuild/plugin.cfg
+!genericbuild/README.md
+
+testbuild/*
+!testbuild/plugin.cfg
+!testbuild/prepare.sh
 
 coverage.out
 coverage.html
 
 go.mod
 go.sum
-
-!.gitignore
+vendor/
