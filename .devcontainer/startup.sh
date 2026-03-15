@@ -26,6 +26,7 @@ sudo chown -R dev:dev /home/dev
 
 # Setup the basic nftables
 sudo nft add table inet f
+sudo nft flush table inet f
 sudo nft add chain inet f i '{ type filter hook input priority filter; policy accept; }'
 sudo nft add chain inet f f '{ type filter hook forward priority filter; policy drop; }'
 sudo nft add chain inet f o '{ type filter hook output priority filter; policy accept; }'
