@@ -17,7 +17,7 @@ source=(coredns-${pkgver}.tar.gz::https://github.com/coredns/coredns/archive/v${
 
 sha256sums=(
   'ab933ed4f04de3cf377d0ecc8399fa1a6613cecdd7a1c40d90eb0a7471463fdb'
-  '2b42e692f37925388d7bb8b5c30cf20b35f634ed3478c6c81b2a4c3e19ec20d1'
+  'd116994b4d250089ccbaa27619570089ed47409bbcde9539d6b0302b44bd7528'
   '3039abf35dc2e7a025572bd12c42e4ebbc75366f95db0a3be6581cff89d4ca33'
   'ac0df774a0aee8d39107772d53ae6e806489fd03a6ceee8bf5541af2b605831b')
 

@@ -29,12 +29,15 @@ ProtectKernelModules=yes
 ProtectKernelTunables=yes
 ProtectProc=invisible
 ProtectSystem=strict
+ProcSubset=pid
 RemoveIPC=yes
 RestrictNamespaces=yes
 RestrictRealtime=yes
 RestrictSUIDSGID=yes
+RestrictAddressFamilies=AF_INET AF_INET6 AF_NETLINK
 SystemCallArchitectures=native
 SystemCallFilter=@system-service
+UMask=0077
 
 [Install]
 WantedBy=multi-user.target
