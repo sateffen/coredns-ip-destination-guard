@@ -14,6 +14,8 @@ import (
 // Mode represents the operation mode of this plugin.
 type Mode string
 
+const pluginName = "ipdestinationguard"
+
 // Valid mode constants
 const (
 	ModeNFTLocal   Mode = "nft-local"
@@ -29,9 +31,9 @@ type parsedConfig struct {
 }
 
 // define a named logger for nice logging.
-var log = clog.NewWithPlugin("ipdestinationguard")
+var log = clog.NewWithPlugin(pluginName)
 
-func init() { plugin.Register("ipdestinationguard", setup) }
+func init() { plugin.Register(pluginName, setup) }
 
 func setup(c *caddy.Controller) error {
 	// First, skip the first token, which is the plugin name "ipdestinationguard"
@@ -40,20 +42,20 @@ func setup(c *caddy.Controller) error {
 	// Second, parse configuration
 	config, err := parseConfig(c)
 	if err != nil {
-		return plugin.Error("ipdestinationguard", err)
+		return plugin.Error(pluginName, err)
 	}
 
 	// Third, validate the parsed configuration
 	err = validateConfig(config)
 	if err != nil {
-		return plugin.Error("ipdestinationguard", err)
+		return plugin.Error(pluginName, err)
 	}
 
 	// The create the manager based on the validated config
 	var dgManager DestinationGuardManager
 	dgManager, err = NewNFTablesManager(config)
 	if err != nil {
-		return plugin.Error("ipdestinationguard", err)
+		return plugin.Error(pluginName, err)
 	}
 
 	// And finally, register plugin with the dnsserver
