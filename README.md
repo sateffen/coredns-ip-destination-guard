@@ -1,6 +1,7 @@
 # CoreDNS IP Destination Guard
 
-This CoreDNS plugin implements Microsoft's [Zero Trust DNS](https://techcommunity.microsoft.com/t5/networking-blog/announcing-zero-trust-dns-private-preview/ba-p/4110366)
+This CoreDNS plugin implements the basic "Zero Trust DNS" (see [here](https://forum.netgate.com/topic/116894/dns-validation-firewall-ruleset-10000)
+or [here](https://techcommunity.microsoft.com/t5/networking-blog/announcing-zero-trust-dns-private-preview/ba-p/4110366))
 concept for Linux - at least partially.
 
 Zero Trust DNS is a security concept that assumes no network connection is trusted by default. Every time a system makes
@@ -159,7 +160,7 @@ still use it.
 - Maybe implement other interesting firewall integrations, like bpfilter or BSD firewall?
 - Experiment with routing instead of firewalls. A friend gave me the idea to use BGP to publish allowed routes via
 BGP to routers and null-route every other IP.
-- Implement the rest of Microsoft's Zero Trust DNS. This includes local DNSSEC validation, DoH and mutual authentication
-(client certificates) with the DNS server.
+- Implement other parts for a more complete Zero Trust DNS implementation. This includes local DNSSEC validation,
+DoH and mutual authentication (client certificates) with the DNS server.
 - Explore the direction of tracking DNS requests or connections by application, allowing for an even finer-grained
 control of destinations.
