@@ -8,145 +8,259 @@ import (
 	"github.com/coredns/caddy"
 )
 
-func TestGetIPRangeEnd(t *testing.T) {
+func TestInnerGetIPRange(t *testing.T) {
 	tests := []struct {
-		startIP  net.IP
-		maskBits uint
-		endIP    net.IP
+		startIP       net.IP
+		maskedBits    uint
+		resultStartIP net.IP
+		resultEndIP   net.IP
+		resultOpenEnd bool
 	}{
 		{
-			startIP:  net.ParseIP("192.168.0.0").To4(),
-			maskBits: 24,
-			endIP:    net.ParseIP("192.168.1.0").To4(),
+			startIP:       net.ParseIP("192.168.0.0").To4(),
+			maskedBits:    24,
+			resultStartIP: net.ParseIP("192.168.0.0").To4(),
+			resultEndIP:   net.ParseIP("192.168.1.0").To4(),
+			resultOpenEnd: false,
 		},
 		{
-			startIP:  net.ParseIP("192.168.0.42").To4(),
-			maskBits: 32,
-			endIP:    net.ParseIP("192.168.0.43").To4(),
+			startIP:       net.ParseIP("192.168.0.42").To4(),
+			maskedBits:    32,
+			resultStartIP: net.ParseIP("192.168.0.42").To4(),
+			resultEndIP:   net.ParseIP("192.168.0.43").To4(),
+			resultOpenEnd: false,
 		},
 		{
-			startIP:  net.ParseIP("fe80::ab12:abcd:1234:0000").To16(),
-			maskBits: 112,
-			endIP:    net.ParseIP("fe80::ab12:abcd:1235:0000").To16(),
+			startIP:       net.ParseIP("192.168.10.42").To4(),
+			maskedBits:    24,
+			resultStartIP: net.ParseIP("192.168.10.0").To4(),
+			resultEndIP:   net.ParseIP("192.168.11.0").To4(),
+			resultOpenEnd: false,
+		},
+		{
+			startIP:       net.ParseIP("fe80::ab12:abcd:1234:0000").To16(),
+			maskedBits:    112,
+			resultStartIP: net.ParseIP("fe80::ab12:abcd:1234:0000").To16(),
+			resultEndIP:   net.ParseIP("fe80::ab12:abcd:1235:0000").To16(),
+			resultOpenEnd: false,
+		},
+		{
+			// Carry must propagate across byte boundaries.
+			startIP:       net.ParseIP("10.255.0.0").To4(),
+			maskedBits:    16,
+			resultStartIP: net.ParseIP("10.255.0.0").To4(),
+			resultEndIP:   net.ParseIP("11.0.0.0").To4(),
+			resultOpenEnd: false,
+		},
+		{
+			// Carry must propagate across byte boundaries.
+			startIP:       net.ParseIP("fe80::ffff:ffff").To16(),
+			maskedBits:    112,
+			resultStartIP: net.ParseIP("fe80::ffff:0").To16(),
+			resultEndIP:   net.ParseIP("fe80::1:0:0").To16(),
+			resultOpenEnd: false,
+		},
+		{
+			// Largest representable range end in IPv4.
+			startIP:       net.ParseIP("255.255.255.254").To4(),
+			maskedBits:    32,
+			resultStartIP: net.ParseIP("255.255.255.254").To4(),
+			resultEndIP:   net.ParseIP("255.255.255.255").To4(),
+			resultOpenEnd: false,
+		},
+		{
+			// Full-range CIDRs: the exclusive end overflows the address space.
+			startIP:       net.ParseIP("0.0.0.0").To4(),
+			maskedBits:    0,
+			resultStartIP: net.ParseIP("0.0.0.0").To4(),
+			resultEndIP:   nil,
+			resultOpenEnd: true,
+		},
+		{
+			startIP:       net.IP(make([]byte, 16)),
+			maskedBits:    0,
+			resultStartIP: net.IP(make([]byte, 16)),
+			resultEndIP:   nil,
+			resultOpenEnd: true,
+		},
+		{
+			// Single max address: end would be one past the address space.
+			startIP:       net.ParseIP("255.255.255.255").To4(),
+			maskedBits:    32,
+			resultStartIP: net.ParseIP("255.255.255.255").To4(),
+			resultEndIP:   nil,
+			resultOpenEnd: true,
+		},
+		{
+			startIP:       net.ParseIP("ffff:ffff:ffff:ffff:ffff:ffff:ffff:ffff").To16(),
+			maskedBits:    128,
+			resultStartIP: net.ParseIP("ffff:ffff:ffff:ffff:ffff:ffff:ffff:ffff").To16(),
+			resultEndIP:   nil,
+			resultOpenEnd: true,
+		},
+		{
+			startIP:       net.ParseIP("0.0.0.0").To4(),
+			maskedBits:    1,
+			resultStartIP: net.ParseIP("0.0.0.0").To4(),
+			resultEndIP:   net.ParseIP("128.0.0.0").To4(),
+			resultOpenEnd: false,
+		},
+		{
+			startIP:       net.ParseIP("::ffff:192.168.123.123"),
+			maskedBits:    120,
+			resultStartIP: net.ParseIP("192.168.123.0").To4(),
+			resultEndIP:   net.ParseIP("192.168.124.0").To4(),
+			resultOpenEnd: false,
 		},
 	}
 
 	for _, test := range tests {
-		endIP := getIPRangeEnd(test.startIP, test.maskBits)
+		parsedIPRange := innerGetIPRange(test.startIP, test.maskedBits)
 
-		if !endIP.Equal(test.endIP) {
-			t.Errorf("Received unexpected endIP: %v - testcase: %+v", endIP, test)
+		if !parsedIPRange.start.Equal(test.resultStartIP) {
+			t.Errorf("Received parsedIPRange.start is unexpected: %v - testcase: %+v", parsedIPRange.start, test)
+			continue
+		}
+
+		if test.resultOpenEnd {
+			if !parsedIPRange.openEnd {
+				t.Errorf("Expected parsedIPRange to be open ended, but was not - testcase %+v", test)
+			}
+		} else {
+			if !parsedIPRange.end.Equal(test.resultEndIP) {
+				t.Errorf("Received parsedIPRange.end is unexpected: %v - testcase: %+v", parsedIPRange.end, test)
+			}
 		}
 	}
 }
 
 func TestGetIPRange(t *testing.T) {
+	// Note: We trust, that the test for innerGetIPRange creates a valid parsedIPResult, so
+	// we test only for start ip
 	tests := []struct {
 		cidrStr   string
 		startIP   net.IP
-		endIP     net.IP
 		shourdErr bool
 	}{
 		{
 			cidrStr:   "192.168.0.0/24",
 			startIP:   net.ParseIP("192.168.0.0").To4(),
-			endIP:     net.ParseIP("192.168.1.0").To4(),
 			shourdErr: false,
 		},
 		{
 			cidrStr:   "192.168.0.42",
 			startIP:   net.ParseIP("192.168.0.42").To4(),
-			endIP:     net.ParseIP("192.168.0.43").To4(),
 			shourdErr: false,
 		},
 		{
 			cidrStr:   "fe80::ab12:abcd:1234:0042/64",
 			startIP:   net.ParseIP("fe80::").To16(),
-			endIP:     net.ParseIP("fe80:0000:0000:0001::").To16(),
 			shourdErr: false,
 		},
 		{
 			cidrStr:   "fe80::ab12:abcd:1234:0042",
 			startIP:   net.ParseIP("fe80::ab12:abcd:1234:0042").To16(),
-			endIP:     net.ParseIP("fe80::ab12:abcd:1234:0043").To16(),
 			shourdErr: false,
 		},
+		// invalid inputs
 		{
 			cidrStr:   "292.168.0.0/24",
 			shourdErr: true,
 		},
+		{
+			cidrStr:   "0.0.0.0/0",
+			shourdErr: true,
+		},
+		{
+			cidrStr:   "::/0",
+			shourdErr: true,
+		},
+		// weird patterns
+		{
+			cidrStr:   "::ffff:192.168.0.0/120",
+			shourdErr: true,
+		},
+		{
+			cidrStr:   "::ffff:192.168.0.42",
+			startIP:   net.ParseIP("192.168.0.42").To4(),
+			shourdErr: false,
+		},
 	}
 
 	for _, test := range tests {
-		startIP, endIP, err := getIPRange(test.cidrStr)
+		parsedIPRange, err := getIPRange(test.cidrStr)
 
-		if !test.shourdErr && err != nil {
-			t.Errorf("Received unexpected err: %v - testcase: %+v", err, test)
+		if test.shourdErr {
+			if err == nil {
+				t.Errorf("Expected error, but testcase succeeded - testcase %+v", test)
+			}
+			continue
 		}
 
-		if !test.shourdErr && !startIP.Equal(test.startIP) {
-			t.Errorf("Received unexpected startIP: %v - testcase: %+v", startIP, test)
+		if err != nil || parsedIPRange == nil {
+			t.Errorf("Received error, but didn't expect one \"%s\" - testcase %+v", err, test)
+			continue
 		}
 
-		if !test.shourdErr && !endIP.Equal(test.endIP) {
-			t.Errorf("Received unexpected endIP: %v - testcase: %+v", endIP, test)
+		if !parsedIPRange.start.Equal(test.startIP) {
+			t.Errorf("Received parsedIPRange.start is unexpected: %v - testcase: %+v", parsedIPRange.start, test)
 		}
 	}
 }
 
 func TestParseConfig(t *testing.T) {
 	tests := []struct {
-		name                    string
-		input                   string
-		expectedMode            Mode
-		expectedIPCount         int // number of IPs in allowedIPs (including start/end pairs)
-		expectedLocalIPCount    int // number of IPs in allowedLocalIPs
-		expectedGatewayIPCount  int // number of IPs in allowedGatewayIPs
-		shouldError             bool
-		errorContains           string
+		name                        string
+		input                       string
+		expectedMode                Mode
+		expectedIPRangeCount        int
+		expectedLocalIPRangeCount   int
+		expectedGatewayIPRangeCount int
+		shouldError                 bool
+		errorContains               string
 	}{
 		// Legacy single-line format tests
 		{
-			name:            "single-line with mode only",
-			input:           "ipdestinationguard nft-local",
-			expectedMode:    "nft-local",
-			expectedIPCount: 0,
-			shouldError:     false,
+			name:                 "single-line with mode only",
+			input:                "ipdestinationguard nft-local",
+			expectedMode:         "nft-local",
+			expectedIPRangeCount: 0,
+			shouldError:          false,
 		},
 		{
-			name:            "single-line with mode and single IP",
-			input:           "ipdestinationguard nft-gateway 192.168.1.1",
-			expectedMode:    "nft-gateway",
-			expectedIPCount: 2, // start and end IP
-			shouldError:     false,
+			name:                 "single-line with mode and single IP",
+			input:                "ipdestinationguard nft-gateway 192.168.1.1",
+			expectedMode:         "nft-gateway",
+			expectedIPRangeCount: 1,
+			shouldError:          false,
 		},
 		{
-			name:            "single-line with mode and CIDR",
-			input:           "ipdestinationguard nft-local 10.0.0.0/24",
-			expectedMode:    "nft-local",
-			expectedIPCount: 2,
-			shouldError:     false,
+			name:                 "single-line with mode and CIDR",
+			input:                "ipdestinationguard nft-local 10.0.0.0/24",
+			expectedMode:         "nft-local",
+			expectedIPRangeCount: 1,
+			shouldError:          false,
 		},
 		{
-			name:            "single-line with multiple IPs and CIDRs",
-			input:           "ipdestinationguard nft-local 192.168.1.1 10.0.0.0/8 172.16.0.0/12",
-			expectedMode:    "nft-local",
-			expectedIPCount: 6, // 3 ranges = 6 IPs
-			shouldError:     false,
+			name:                 "single-line with multiple IPs and CIDRs",
+			input:                "ipdestinationguard nft-local 192.168.1.1 10.0.0.0/8 172.16.0.0/12",
+			expectedMode:         "nft-local",
+			expectedIPRangeCount: 3,
+			shouldError:          false,
 		},
 		{
-			name:            "single-line with IPv6",
-			input:           "ipdestinationguard nft-gateway fe80::1",
-			expectedMode:    "nft-gateway",
-			expectedIPCount: 2,
-			shouldError:     false,
+			name:                 "single-line with IPv6",
+			input:                "ipdestinationguard nft-gateway fe80::1",
+			expectedMode:         "nft-gateway",
+			expectedIPRangeCount: 1,
+			shouldError:          false,
 		},
 		{
-			name:            "single-line with nft-both mode",
-			input:           "ipdestinationguard nft-both 192.168.1.1",
-			expectedMode:    "nft-both",
-			expectedIPCount: 2,
-			shouldError:     false,
+			name:                 "single-line with nft-both mode",
+			input:                "ipdestinationguard nft-both 192.168.1.1",
+			expectedMode:         "nft-both",
+			expectedIPRangeCount: 1,
+			shouldError:          false,
 		},
 		{
 			name:          "single-line with invalid IP",
@@ -161,9 +275,9 @@ func TestParseConfig(t *testing.T) {
 			input: `ipdestinationguard {
 				mode nft-local
 			}`,
-			expectedMode:    "nft-local",
-			expectedIPCount: 0,
-			shouldError:     false,
+			expectedMode:         "nft-local",
+			expectedIPRangeCount: 0,
+			shouldError:          false,
 		},
 		{
 			name: "block with mode and single IP",
@@ -171,9 +285,9 @@ func TestParseConfig(t *testing.T) {
 				mode nft-gateway
 				allowedIPs 192.168.1.1
 			}`,
-			expectedMode:    "nft-gateway",
-			expectedIPCount: 2,
-			shouldError:     false,
+			expectedMode:         "nft-gateway",
+			expectedIPRangeCount: 1,
+			shouldError:          false,
 		},
 		{
 			name: "block with mode and multiple IPs on one line",
@@ -181,9 +295,9 @@ func TestParseConfig(t *testing.T) {
 				mode nft-local
 				allowedIPs 192.168.1.1 10.0.0.0/24 172.16.0.1
 			}`,
-			expectedMode:    "nft-local",
-			expectedIPCount: 6,
-			shouldError:     false,
+			expectedMode:         "nft-local",
+			expectedIPRangeCount: 3,
+			shouldError:          false,
 		},
 		{
 			name: "block with multiple allowedIPs directives",
@@ -193,9 +307,9 @@ func TestParseConfig(t *testing.T) {
 				allowedIPs 10.0.0.0/24
 				allowedIPs 172.16.0.1
 			}`,
-			expectedMode:    "nft-local",
-			expectedIPCount: 6,
-			shouldError:     false,
+			expectedMode:         "nft-local",
+			expectedIPRangeCount: 3,
+			shouldError:          false,
 		},
 		{
 			name: "block with IPv6 CIDR",
@@ -203,9 +317,9 @@ func TestParseConfig(t *testing.T) {
 				mode nft-gateway
 				allowedIPs fe80::/64
 			}`,
-			expectedMode:    "nft-gateway",
-			expectedIPCount: 2,
-			shouldError:     false,
+			expectedMode:         "nft-gateway",
+			expectedIPRangeCount: 1,
+			shouldError:          false,
 		},
 		{
 			name: "block with mixed IPv4 and IPv6",
@@ -213,9 +327,9 @@ func TestParseConfig(t *testing.T) {
 				mode nft-local
 				allowedIPs 192.168.1.0/24 fe80::1
 			}`,
-			expectedMode:    "nft-local",
-			expectedIPCount: 4,
-			shouldError:     false,
+			expectedMode:         "nft-local",
+			expectedIPRangeCount: 2,
+			shouldError:          false,
 		},
 		{
 			name: "block with nft-both mode",
@@ -223,9 +337,9 @@ func TestParseConfig(t *testing.T) {
 				mode nft-both
 				allowedIPs 192.168.1.1 10.0.0.0/24
 			}`,
-			expectedMode:    "nft-both",
-			expectedIPCount: 4,
-			shouldError:     false,
+			expectedMode:         "nft-both",
+			expectedIPRangeCount: 2,
+			shouldError:          false,
 		},
 		{
 			name: "block with allowedLocalIPs",
@@ -234,11 +348,11 @@ func TestParseConfig(t *testing.T) {
 				allowedIPs 9.9.9.9
 				allowedLocalIPs 10.88.0.0/16
 			}`,
-			expectedMode:           "nft-local",
-			expectedIPCount:        2,
-			expectedLocalIPCount:   2,
-			expectedGatewayIPCount: 0,
-			shouldError:            false,
+			expectedMode:                "nft-local",
+			expectedIPRangeCount:        1,
+			expectedLocalIPRangeCount:   1,
+			expectedGatewayIPRangeCount: 0,
+			shouldError:                 false,
 		},
 		{
 			name: "block with allowedGatewayIPs",
@@ -247,11 +361,11 @@ func TestParseConfig(t *testing.T) {
 				allowedIPs 9.9.9.9
 				allowedGatewayIPs 192.168.100.0/24
 			}`,
-			expectedMode:           "nft-gateway",
-			expectedIPCount:        2,
-			expectedLocalIPCount:   0,
-			expectedGatewayIPCount: 2,
-			shouldError:            false,
+			expectedMode:                "nft-gateway",
+			expectedIPRangeCount:        1,
+			expectedLocalIPRangeCount:   0,
+			expectedGatewayIPRangeCount: 1,
+			shouldError:                 false,
 		},
 		{
 			name: "block with nft-both and all IP types",
@@ -261,11 +375,11 @@ func TestParseConfig(t *testing.T) {
 				allowedLocalIPs 10.88.0.0/16
 				allowedGatewayIPs 192.168.100.0/24
 			}`,
-			expectedMode:           "nft-both",
-			expectedIPCount:        4,
-			expectedLocalIPCount:   2,
-			expectedGatewayIPCount: 2,
-			shouldError:            false,
+			expectedMode:                "nft-both",
+			expectedIPRangeCount:        2,
+			expectedLocalIPRangeCount:   1,
+			expectedGatewayIPRangeCount: 1,
+			shouldError:                 false,
 		},
 		{
 			name: "block with multiple allowedLocalIPs directives",
@@ -274,19 +388,19 @@ func TestParseConfig(t *testing.T) {
 				allowedLocalIPs 10.88.0.0/16
 				allowedLocalIPs 172.16.0.0/12
 			}`,
-			expectedMode:           "nft-local",
-			expectedIPCount:        0,
-			expectedLocalIPCount:   4,
-			expectedGatewayIPCount: 0,
-			shouldError:            false,
+			expectedMode:                "nft-local",
+			expectedIPRangeCount:        0,
+			expectedLocalIPRangeCount:   2,
+			expectedGatewayIPRangeCount: 0,
+			shouldError:                 false,
 		},
 		{
 			name: "empty block",
 			input: `ipdestinationguard {
 			}`,
-			expectedMode:    "",
-			expectedIPCount: 0,
-			shouldError:     false,
+			expectedMode:         "",
+			expectedIPRangeCount: 0,
+			shouldError:          false,
 		},
 
 		// Error cases
@@ -344,20 +458,20 @@ func TestParseConfig(t *testing.T) {
 		},
 	}
 
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			c := caddy.NewTestController("dns", tt.input)
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			c := caddy.NewTestController("dns", test.input)
 			c.Next() // consume plugin name
 
 			config, err := parseConfig(c)
 
-			if tt.shouldError {
+			if test.shouldError {
 				if err == nil {
-					t.Errorf("Expected error containing '%s', but got no error", tt.errorContains)
+					t.Errorf("Expected error containing '%s', but got no error", test.errorContains)
 					return
 				}
-				if tt.errorContains != "" && !strings.Contains(err.Error(), tt.errorContains) {
-					t.Errorf("Expected error containing '%s', but got: %v", tt.errorContains, err)
+				if test.errorContains != "" && !strings.Contains(err.Error(), test.errorContains) {
+					t.Errorf("Expected error containing '%s', but got: %v", test.errorContains, err)
 				}
 				return
 			}
@@ -367,20 +481,20 @@ func TestParseConfig(t *testing.T) {
 				return
 			}
 
-			if config.mode != tt.expectedMode {
-				t.Errorf("Expected mode '%s', got '%s'", tt.expectedMode, config.mode)
+			if config.mode != test.expectedMode {
+				t.Errorf("Expected mode '%s', got '%s'", test.expectedMode, config.mode)
 			}
 
-			if len(config.allowedIPs) != tt.expectedIPCount {
-				t.Errorf("Expected %d allowedIPs, got %d", tt.expectedIPCount, len(config.allowedIPs))
+			if len(config.allowedIPs) != test.expectedIPRangeCount {
+				t.Errorf("Expected %d allowedIPs, got %d", test.expectedIPRangeCount, len(config.allowedIPs))
 			}
 
-			if len(config.allowedLocalIPs) != tt.expectedLocalIPCount {
-				t.Errorf("Expected %d allowedLocalIPs, got %d", tt.expectedLocalIPCount, len(config.allowedLocalIPs))
+			if len(config.allowedLocalIPs) != test.expectedLocalIPRangeCount {
+				t.Errorf("Expected %d allowedLocalIPs, got %d", test.expectedLocalIPRangeCount, len(config.allowedLocalIPs))
 			}
 
-			if len(config.allowedGatewayIPs) != tt.expectedGatewayIPCount {
-				t.Errorf("Expected %d allowedGatewayIPs, got %d", tt.expectedGatewayIPCount, len(config.allowedGatewayIPs))
+			if len(config.allowedGatewayIPs) != test.expectedGatewayIPRangeCount {
+				t.Errorf("Expected %d allowedGatewayIPs, got %d", test.expectedGatewayIPRangeCount, len(config.allowedGatewayIPs))
 			}
 		})
 	}
@@ -397,7 +511,7 @@ func TestValidateConfig(t *testing.T) {
 			name: "valid nft-local mode",
 			config: &parsedConfig{
 				mode:       ModeNFTLocal,
-				allowedIPs: []net.IP{},
+				allowedIPs: []parsedIPRange{},
 			},
 			shouldError: false,
 		},
@@ -405,7 +519,7 @@ func TestValidateConfig(t *testing.T) {
 			name: "valid nft-gateway mode",
 			config: &parsedConfig{
 				mode:       ModeNFTGateway,
-				allowedIPs: []net.IP{},
+				allowedIPs: []parsedIPRange{},
 			},
 			shouldError: false,
 		},
@@ -413,9 +527,9 @@ func TestValidateConfig(t *testing.T) {
 			name: "valid config with IPs",
 			config: &parsedConfig{
 				mode: ModeNFTLocal,
-				allowedIPs: []net.IP{
-					net.ParseIP("192.168.1.1"),
-					net.ParseIP("192.168.1.2"),
+				allowedIPs: []parsedIPRange{
+					innerGetIPRange(net.ParseIP("192.168.1.1"), 24),
+					innerGetIPRange(net.ParseIP("192.168.9.9"), 24),
 				},
 			},
 			shouldError: false,
@@ -424,7 +538,7 @@ func TestValidateConfig(t *testing.T) {
 			name: "valid nft-both mode",
 			config: &parsedConfig{
 				mode:       ModeNFTBoth,
-				allowedIPs: []net.IP{},
+				allowedIPs: []parsedIPRange{},
 			},
 			shouldError: false,
 		},
@@ -432,7 +546,7 @@ func TestValidateConfig(t *testing.T) {
 			name: "empty mode",
 			config: &parsedConfig{
 				mode:       "",
-				allowedIPs: []net.IP{},
+				allowedIPs: []parsedIPRange{},
 			},
 			shouldError:   true,
 			errorContains: "mode is required",
@@ -441,7 +555,7 @@ func TestValidateConfig(t *testing.T) {
 			name: "invalid mode value",
 			config: &parsedConfig{
 				mode:       "invalid-mode",
-				allowedIPs: []net.IP{},
+				allowedIPs: []parsedIPRange{},
 			},
 			shouldError:   true,
 			errorContains: "invalid mode",
@@ -450,24 +564,24 @@ func TestValidateConfig(t *testing.T) {
 			name: "invalid mode - local instead of nft-local",
 			config: &parsedConfig{
 				mode:       "local",
-				allowedIPs: []net.IP{},
+				allowedIPs: []parsedIPRange{},
 			},
 			shouldError:   true,
 			errorContains: "invalid mode",
 		},
 	}
 
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			err := validateConfig(tt.config)
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			err := validateConfig(test.config)
 
-			if tt.shouldError {
+			if test.shouldError {
 				if err == nil {
-					t.Errorf("Expected error containing '%s', but got no error", tt.errorContains)
+					t.Errorf("Expected error containing '%s', but got no error", test.errorContains)
 					return
 				}
-				if tt.errorContains != "" && !strings.Contains(err.Error(), tt.errorContains) {
-					t.Errorf("Expected error containing '%s', but got: %v", tt.errorContains, err)
+				if test.errorContains != "" && !strings.Contains(err.Error(), test.errorContains) {
+					t.Errorf("Expected error containing '%s', but got: %v", test.errorContains, err)
 				}
 				return
 			}

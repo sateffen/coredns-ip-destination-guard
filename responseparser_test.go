@@ -1,6 +1,7 @@
 package ipdestinationguard
 
 import (
+	"fmt"
 	"net"
 	"testing"
 
@@ -9,15 +10,27 @@ import (
 
 // MockDestinationGuardManager is a mock implementation of DestinationGuardManager for testing
 type MockDestinationGuardManager struct {
-	capturedIPs []net.IP
-	capturedTTL uint32
-	callCount   int
+	capturedIPs   []net.IP
+	capturedTTL   uint32
+	callCount     int
+	startupCount  int
+	shutdownCount int
 }
 
 func (m *MockDestinationGuardManager) AddRoutes(ips []net.IP, ttl uint32) {
 	m.capturedIPs = append(m.capturedIPs, ips...)
 	m.capturedTTL = ttl
 	m.callCount++
+}
+
+func (m *MockDestinationGuardManager) Startup() error {
+	m.startupCount++
+	return nil
+}
+
+func (m *MockDestinationGuardManager) Shutdown() error {
+	m.shutdownCount++
+	return nil
 }
 
 // MockResponseWriter is a mock implementation of dns.ResponseWriter for testing

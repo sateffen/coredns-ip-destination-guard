@@ -23,11 +23,17 @@ const (
 	ModeNFTBoth    Mode = "nft-both"
 )
 
+type parsedIPRange struct {
+	start   net.IP
+	end     net.IP
+	openEnd bool
+}
+
 type parsedConfig struct {
 	mode              Mode
-	allowedIPs        []net.IP // Applied to all chains
-	allowedLocalIPs   []net.IP // Applied only to OUTPUT chain (nft-local)
-	allowedGatewayIPs []net.IP // Applied only to FORWARD chain (nft-gateway)
+	allowedIPs        []parsedIPRange // Applied to all chains
+	allowedLocalIPs   []parsedIPRange // Applied only to OUTPUT chain (nft-local)
+	allowedGatewayIPs []parsedIPRange // Applied only to FORWARD chain (nft-gateway)
 }
 
 // define a named logger for nice logging.
@@ -58,6 +64,9 @@ func setup(c *caddy.Controller) error {
 		return plugin.Error(pluginName, err)
 	}
 
+	c.OnStartup(dgManager.Startup)
+	c.OnShutdown(dgManager.Shutdown)
+
 	// And finally, register plugin with the dnsserver
 	dnsserver.GetConfig(c).AddPlugin(func(next plugin.Handler) plugin.Handler {
 		return IPDestinationGuard{Next: next, DGManager: dgManager}
@@ -67,7 +76,7 @@ func setup(c *caddy.Controller) error {
 }
 
 // parseConfig extracts configuration values from given the Caddy controller.
-// It supports both single-line format (legacy) and block format:
+// It supports both single-line format and block format:
 //   - Single-line: ipdestinationguard nft-local 1.2.3.4 5.6.7.0/24
 //   - Block format: ipdestinationguard {
 //     mode nft-local
@@ -75,26 +84,24 @@ func setup(c *caddy.Controller) error {
 //     }
 func parseConfig(c *caddy.Controller) (*parsedConfig, error) {
 	config := &parsedConfig{
-		mode:              "", // Empty string = invalid, will fail validation
-		allowedIPs:        make([]net.IP, 0, 4),
-		allowedLocalIPs:   make([]net.IP, 0, 4),
-		allowedGatewayIPs: make([]net.IP, 0, 4),
+		mode:              "", // Empty string = invalid, will fail validation later
+		allowedIPs:        make([]parsedIPRange, 0, 4),
+		allowedLocalIPs:   make([]parsedIPRange, 0, 4),
+		allowedGatewayIPs: make([]parsedIPRange, 0, 4),
 	}
 
-	// Check for single-line format
+	// Single line format parsing
 	allArgs := c.RemainingArgs()
 	if len(allArgs) > 0 {
-		// Single-line format: ipdestinationguard mode cidr1 cidr2 ...
 		config.mode = Mode(allArgs[0])
 
 		for _, ipString := range allArgs[1:] {
-			startIP, endIP, err := getIPRange(ipString)
+			ipRange, err := getIPRange(ipString)
 			if err != nil {
 				return nil, err
 			}
 
-			config.allowedIPs = append(config.allowedIPs, startIP)
-			config.allowedIPs = append(config.allowedIPs, endIP)
+			config.allowedIPs = append(config.allowedIPs, *ipRange)
 		}
 
 		return config, nil
@@ -119,13 +126,12 @@ func parseConfig(c *caddy.Controller) (*parsedConfig, error) {
 			}
 
 			for _, ipString := range args {
-				startIP, endIP, err := getIPRange(ipString)
+				ipRange, err := getIPRange(ipString)
 				if err != nil {
 					return nil, err
 				}
 
-				config.allowedIPs = append(config.allowedIPs, startIP)
-				config.allowedIPs = append(config.allowedIPs, endIP)
+				config.allowedIPs = append(config.allowedIPs, *ipRange)
 			}
 
 		case "allowedLocalIPs":
@@ -135,13 +141,12 @@ func parseConfig(c *caddy.Controller) (*parsedConfig, error) {
 			}
 
 			for _, ipString := range args {
-				startIP, endIP, err := getIPRange(ipString)
+				ipRange, err := getIPRange(ipString)
 				if err != nil {
 					return nil, err
 				}
 
-				config.allowedLocalIPs = append(config.allowedLocalIPs, startIP)
-				config.allowedLocalIPs = append(config.allowedLocalIPs, endIP)
+				config.allowedLocalIPs = append(config.allowedLocalIPs, *ipRange)
 			}
 
 		case "allowedGatewayIPs":
@@ -151,13 +156,12 @@ func parseConfig(c *caddy.Controller) (*parsedConfig, error) {
 			}
 
 			for _, ipString := range args {
-				startIP, endIP, err := getIPRange(ipString)
+				ipRange, err := getIPRange(ipString)
 				if err != nil {
 					return nil, err
 				}
 
-				config.allowedGatewayIPs = append(config.allowedGatewayIPs, startIP)
-				config.allowedGatewayIPs = append(config.allowedGatewayIPs, endIP)
+				config.allowedGatewayIPs = append(config.allowedGatewayIPs, *ipRange)
 			}
 
 		default:
@@ -191,21 +195,42 @@ func validateConfig(config *parsedConfig) error {
 	return nil
 }
 
-// Returns the IP range end for given startIP with given subnet-mask bit count
-func getIPRangeEnd(startIP net.IP, maskedBits uint) net.IP {
+// Determines the actual parsed IP Range given startIP and masked bits
+// The end IP is exclusive, like needed for nftables.
+// openEnd means, that the end IP would overflow, therefore the interval is open end.
+// WARNING: maskedBits has to be a valid value, this function does NOT validate this!
+func innerGetIPRange(startIP net.IP, maskedBits uint) parsedIPRange {
+	hostBits := uint(len(startIP)*8) - maskedBits
+
 	startIPInt := big.NewInt(0)
 	startIPInt.SetBytes(startIP)
-	endIPInt := big.NewInt(1)
-	endIPInt.Lsh(endIPInt, uint(len(startIP)*8)-maskedBits)
-	endIPInt.Add(endIPInt, startIPInt)
-	endIPBuffer := make([]byte, len(startIP))
-	endIPBuffer = endIPInt.FillBytes(endIPBuffer)
+	// set all hostbits to 0, to get the base address
+	startIPInt.Lsh(startIPInt.Rsh(startIPInt, hostBits), hostBits)
 
-	return net.IP(endIPBuffer)
+	endIPInt := big.NewInt(1)
+	endIPInt.Lsh(endIPInt, hostBits)
+	endIPInt.Add(endIPInt, startIPInt)
+
+	startIPBuffer := make([]byte, len(startIP))
+	startIPBuffer = startIPInt.FillBytes(startIPBuffer)
+	resultingIPRange := parsedIPRange{start: net.IP(startIPBuffer)}
+
+	// if the end-addr needs more bytes than the start-addr, we overflow the IP range
+	// so we tell the outer world there is no end-addr -> the range is open.
+	if len(endIPInt.Bytes()) > len(startIP) {
+		resultingIPRange.openEnd = true
+	} else {
+		endIPBuffer := make([]byte, len(startIP))
+		endIPBuffer = endIPInt.FillBytes(endIPBuffer)
+		resultingIPRange.end = net.IP(endIPBuffer)
+		resultingIPRange.openEnd = false
+	}
+
+	return resultingIPRange
 }
 
 // Parses given string and tries to determine the IP range it describes.
-func getIPRange(str string) (net.IP, net.IP, error) {
+func getIPRange(str string) (*parsedIPRange, error) {
 	_, cidrNet, err := net.ParseCIDR(str)
 	if err == nil {
 		startIP := cidrNet.IP.To4()
@@ -215,7 +240,15 @@ func getIPRange(str string) (net.IP, net.IP, error) {
 
 		prefixLen, _ := cidrNet.Mask.Size()
 
-		return startIP, getIPRangeEnd(startIP, uint(prefixLen)), nil
+		if prefixLen == 0 {
+			return nil, fmt.Errorf("received a CIDR with prefix length of 0, which is not supported")
+		} else if prefixLen > len(startIP)*8 {
+			return nil, fmt.Errorf("received a CIDR with too long prefix length of \"%d\"", prefixLen)
+		}
+
+		parsedRange := innerGetIPRange(startIP, uint(prefixLen))
+
+		return &parsedRange, nil
 	}
 
 	ip := net.ParseIP(str)
@@ -227,8 +260,10 @@ func getIPRange(str string) (net.IP, net.IP, error) {
 			prefixLen = uint(128)
 		}
 
-		return startIP, getIPRangeEnd(startIP, prefixLen), nil
+		parsedRange := innerGetIPRange(startIP, prefixLen)
+
+		return &parsedRange, nil
 	}
 
-	return nil, nil, fmt.Errorf("can't extract ip range from \"%s\", no CIDR or IP detected", str)
+	return nil, fmt.Errorf("can't extract ip range from \"%s\", no CIDR or IP detected", str)
 }

@@ -29,7 +29,7 @@ type NFTablesManager struct {
 }
 
 // Add given IPs for ttl+30 seconds to the allow traffic to them.
-func (manager *NFTablesManager) AddRoutes(ips []net.IP, ttl uint32) {
+func (m *NFTablesManager) AddRoutes(ips []net.IP, ttl uint32) {
 	if len(ips) == 0 {
 		return
 	}
@@ -38,47 +38,47 @@ func (manager *NFTablesManager) AddRoutes(ips []net.IP, ttl uint32) {
 	batch := make([]*allowRoute, 0, len(ips))
 
 	for _, ip := range ips {
-		newEntry := manager.allowRoutePool.Get().(*allowRoute)
+		newEntry := m.allowRoutePool.Get().(*allowRoute)
 		newEntry.ipAddress = ip
 		newEntry.validUnitl = validUntil
 
 		batch = append(batch, newEntry)
 	}
 
-	manager.syncChannel <- batch
+	m.syncChannel <- batch
 }
 
 // prepareNFTables does what the name says, prepares the nftables stack with all necessary chains and rules in a custom table.
 // Errors returned by this function are considered fatal, as this plugin can't work without nftables.
-func (manager *NFTablesManager) prepareNFTables(config *parsedConfig) error {
+func (m *NFTablesManager) prepareNFTables(config *parsedConfig) error {
 	targetTable := nftables.Table{
 		Name:   "coredns-ip-destination-guard",
 		Family: nftables.TableFamilyINet,
 	}
 
 	// Create the table and flush it
-	manager.nlInterface.AddTable(&targetTable)
-	manager.nlInterface.FlushTable(&targetTable)
+	m.nlInterface.AddTable(&targetTable)
+	m.nlInterface.FlushTable(&targetTable)
 
 	// Create shared IPv4/IPv6 sets
-	manager.ipv4AllowSet = &nftables.Set{
+	m.ipv4AllowSet = &nftables.Set{
 		Name:    "ipv4allowlist",
 		Table:   &targetTable,
 		Dynamic: true,
 		KeyType: nftables.TypeIPAddr,
 	}
 
-	manager.ipv6AllowSet = &nftables.Set{
+	m.ipv6AllowSet = &nftables.Set{
 		Name:    "ipv6allowlist",
 		Table:   &targetTable,
 		Dynamic: true,
 		KeyType: nftables.TypeIP6Addr,
 	}
 
-	if err := manager.nlInterface.AddSet(manager.ipv4AllowSet, []nftables.SetElement{}); err != nil {
+	if err := m.nlInterface.AddSet(m.ipv4AllowSet, []nftables.SetElement{}); err != nil {
 		return err
 	}
-	if err := manager.nlInterface.AddSet(manager.ipv6AllowSet, []nftables.SetElement{}); err != nil {
+	if err := m.nlInterface.AddSet(m.ipv6AllowSet, []nftables.SetElement{}); err != nil {
 		return err
 	}
 
@@ -124,15 +124,15 @@ func (manager *NFTablesManager) prepareNFTables(config *parsedConfig) error {
 			Priority: nftables.ChainPriorityFilter,
 			Policy:   &targetChainPolicy,
 		}
-		manager.nlInterface.AddChain(&targetChain)
+		m.nlInterface.AddChain(&targetChain)
 
 		// Add all rules to this chain
-		if err := manager.addChainRules(&targetTable, &targetChain, chainSpec.name, config); err != nil {
+		if err := m.addChainRules(&targetTable, &targetChain, chainSpec.name, config); err != nil {
 			return err
 		}
 	}
 
-	if err := manager.nlInterface.Flush(); err != nil {
+	if err := m.nlInterface.Flush(); err != nil {
 		log.Errorf("Writing to NFTables failed: %v", err)
 		nftablesFlushErrorsTotal.Inc()
 		return err
@@ -143,49 +143,37 @@ func (manager *NFTablesManager) prepareNFTables(config *parsedConfig) error {
 
 // addChainRules adds all filtering rules to a specific chain.
 // Errors returned are not recoverable, therefore the process should get stopped on error.
-func (manager *NFTablesManager) addChainRules(targetTable *nftables.Table, targetChain *nftables.Chain, chainName string, config *parsedConfig) error {
+func (m *NFTablesManager) addChainRules(targetTable *nftables.Table, targetChain *nftables.Chain, chainName string, config *parsedConfig) error {
 	// Prepare permanent allow sets from config
 	// Start with common allowedIPs (applied to all chains)
 	ipv4PermanentAllowSetElements := []nftables.SetElement{{Key: make([]byte, 4), IntervalEnd: true}}
 	ipv6PermanentAllowSetElements := []nftables.SetElement{{Key: make([]byte, 16), IntervalEnd: true}}
 
-	// Add common allowedIPs
-	for i := 0; i < len(config.allowedIPs); i += 2 {
-		key := config.allowedIPs[i]
-		keyEnd := config.allowedIPs[i+1]
-
-		if len(key) == net.IPv4len {
-			ipv4PermanentAllowSetElements = append(ipv4PermanentAllowSetElements, nftables.SetElement{Key: key, IntervalEnd: false})
-			ipv4PermanentAllowSetElements = append(ipv4PermanentAllowSetElements, nftables.SetElement{Key: keyEnd, IntervalEnd: true})
-		} else {
-			ipv6PermanentAllowSetElements = append(ipv6PermanentAllowSetElements, nftables.SetElement{Key: key, IntervalEnd: false})
-			ipv6PermanentAllowSetElements = append(ipv6PermanentAllowSetElements, nftables.SetElement{Key: keyEnd, IntervalEnd: true})
-		}
-	}
-
-	// Add chain-specific IPs
-	var chainSpecificIPs []net.IP
+	// create a list of all allowed domains
+	allowedIPs := config.allowedIPs
 	if chainName == "output" && len(config.allowedLocalIPs) > 0 {
-		chainSpecificIPs = config.allowedLocalIPs
+		allowedIPs = append(allowedIPs, config.allowedLocalIPs...)
 	} else if chainName == "forward" && len(config.allowedGatewayIPs) > 0 {
-		chainSpecificIPs = config.allowedGatewayIPs
+		allowedIPs = append(allowedIPs, config.allowedGatewayIPs...)
 	}
 
-	for i := 0; i < len(chainSpecificIPs); i += 2 {
-		key := chainSpecificIPs[i]
-		keyEnd := chainSpecificIPs[i+1]
-
-		if len(key) == net.IPv4len {
-			ipv4PermanentAllowSetElements = append(ipv4PermanentAllowSetElements, nftables.SetElement{Key: key, IntervalEnd: false})
-			ipv4PermanentAllowSetElements = append(ipv4PermanentAllowSetElements, nftables.SetElement{Key: keyEnd, IntervalEnd: true})
+	// Add all allowed ips to the sets
+	for _, ipRange := range allowedIPs {
+		if len(ipRange.start) == net.IPv4len {
+			ipv4PermanentAllowSetElements = append(ipv4PermanentAllowSetElements, nftables.SetElement{Key: ipRange.start, IntervalEnd: false})
+			if !ipRange.openEnd {
+				ipv4PermanentAllowSetElements = append(ipv4PermanentAllowSetElements, nftables.SetElement{Key: ipRange.end, IntervalEnd: true})
+			}
 		} else {
-			ipv6PermanentAllowSetElements = append(ipv6PermanentAllowSetElements, nftables.SetElement{Key: key, IntervalEnd: false})
-			ipv6PermanentAllowSetElements = append(ipv6PermanentAllowSetElements, nftables.SetElement{Key: keyEnd, IntervalEnd: true})
+			ipv6PermanentAllowSetElements = append(ipv6PermanentAllowSetElements, nftables.SetElement{Key: ipRange.start, IntervalEnd: false})
+			if !ipRange.openEnd {
+				ipv6PermanentAllowSetElements = append(ipv6PermanentAllowSetElements, nftables.SetElement{Key: ipRange.end, IntervalEnd: true})
+			}
 		}
 	}
 
 	// region drop ct invalid traffc
-	manager.nlInterface.AddRule(&nftables.Rule{
+	m.nlInterface.AddRule(&nftables.Rule{
 		Table: targetTable,
 		Chain: targetChain,
 		Exprs: []expr.Any{
@@ -213,7 +201,7 @@ func (manager *NFTablesManager) addChainRules(targetTable *nftables.Table, targe
 	// endregion
 
 	// region accept ct establised or related traffc
-	manager.nlInterface.AddRule(&nftables.Rule{
+	m.nlInterface.AddRule(&nftables.Rule{
 		Table: targetTable,
 		Chain: targetChain,
 		Exprs: []expr.Any{
@@ -241,7 +229,7 @@ func (manager *NFTablesManager) addChainRules(targetTable *nftables.Table, targe
 	// endregion
 
 	// region accept localhost traffic
-	manager.nlInterface.AddRule(&nftables.Rule{
+	m.nlInterface.AddRule(&nftables.Rule{
 		Table: targetTable,
 		Chain: targetChain,
 		Exprs: []expr.Any{
@@ -268,7 +256,7 @@ func (manager *NFTablesManager) addChainRules(targetTable *nftables.Table, targe
 		Constant:  true,
 		KeyType:   nftables.TypeICMP6Type,
 	}
-	if err := manager.nlInterface.AddSet(&icmpv6TypeAllowSet, []nftables.SetElement{
+	if err := m.nlInterface.AddSet(&icmpv6TypeAllowSet, []nftables.SetElement{
 		{Key: []byte{0x85}}, // nd-router-solicit   = 0x85
 		{Key: []byte{0x86}}, // nd-router-advert    = 0x86
 		{Key: []byte{0x87}}, // nd-neighbor-solicit = 0x87
@@ -276,7 +264,7 @@ func (manager *NFTablesManager) addChainRules(targetTable *nftables.Table, targe
 	}); err != nil {
 		return err
 	}
-	manager.nlInterface.AddRule(&nftables.Rule{
+	m.nlInterface.AddRule(&nftables.Rule{
 		Table: targetTable,
 		Chain: targetChain,
 		Exprs: []expr.Any{
@@ -317,10 +305,10 @@ func (manager *NFTablesManager) addChainRules(targetTable *nftables.Table, targe
 			Interval:  true,
 			KeyType:   nftables.TypeIPAddr,
 		}
-		if err := manager.nlInterface.AddSet(&ipv4PermanentAllowSet, ipv4PermanentAllowSetElements); err != nil {
+		if err := m.nlInterface.AddSet(&ipv4PermanentAllowSet, ipv4PermanentAllowSetElements); err != nil {
 			return err
 		}
-		manager.nlInterface.AddRule(&nftables.Rule{
+		m.nlInterface.AddRule(&nftables.Rule{
 			Table: targetTable,
 			Chain: targetChain,
 			Exprs: []expr.Any{
@@ -362,10 +350,10 @@ func (manager *NFTablesManager) addChainRules(targetTable *nftables.Table, targe
 			Interval:  true,
 			KeyType:   nftables.TypeIP6Addr,
 		}
-		if err := manager.nlInterface.AddSet(&ipv6PermanentAllowSet, ipv6PermanentAllowSetElements); err != nil {
+		if err := m.nlInterface.AddSet(&ipv6PermanentAllowSet, ipv6PermanentAllowSetElements); err != nil {
 			return err
 		}
-		manager.nlInterface.AddRule(&nftables.Rule{
+		m.nlInterface.AddRule(&nftables.Rule{
 			Table: targetTable,
 			Chain: targetChain,
 			Exprs: []expr.Any{
@@ -399,7 +387,7 @@ func (manager *NFTablesManager) addChainRules(targetTable *nftables.Table, targe
 	// endregion
 
 	// region allow temporary allowlisted ipv4 traffic
-	manager.nlInterface.AddRule(&nftables.Rule{
+	m.nlInterface.AddRule(&nftables.Rule{
 		Table: targetTable,
 		Chain: targetChain,
 		Exprs: []expr.Any{
@@ -421,8 +409,8 @@ func (manager *NFTablesManager) addChainRules(targetTable *nftables.Table, targe
 			},
 			&expr.Lookup{
 				SourceRegister: 0x1,
-				SetID:          manager.ipv4AllowSet.ID,
-				SetName:        manager.ipv4AllowSet.Name,
+				SetID:          m.ipv4AllowSet.ID,
+				SetName:        m.ipv4AllowSet.Name,
 			},
 			&expr.Verdict{
 				Kind: expr.VerdictAccept,
@@ -432,7 +420,7 @@ func (manager *NFTablesManager) addChainRules(targetTable *nftables.Table, targe
 	// endregion
 
 	// region allow temporary allowlisted ipv6 traffic
-	manager.nlInterface.AddRule(&nftables.Rule{
+	m.nlInterface.AddRule(&nftables.Rule{
 		Table: targetTable,
 		Chain: targetChain,
 		Exprs: []expr.Any{
@@ -454,8 +442,8 @@ func (manager *NFTablesManager) addChainRules(targetTable *nftables.Table, targe
 			},
 			&expr.Lookup{
 				SourceRegister: 0x1,
-				SetID:          manager.ipv6AllowSet.ID,
-				SetName:        manager.ipv6AllowSet.Name,
+				SetID:          m.ipv6AllowSet.ID,
+				SetName:        m.ipv6AllowSet.Name,
 			},
 			&expr.Verdict{
 				Kind: expr.VerdictAccept,
@@ -465,7 +453,7 @@ func (manager *NFTablesManager) addChainRules(targetTable *nftables.Table, targe
 	// endregion
 
 	// region reject all other traffic
-	manager.nlInterface.AddRule(&nftables.Rule{
+	m.nlInterface.AddRule(&nftables.Rule{
 		Table: targetTable,
 		Chain: targetChain,
 		Exprs: []expr.Any{
@@ -481,19 +469,19 @@ func (manager *NFTablesManager) addChainRules(targetTable *nftables.Table, targe
 }
 
 // Reads all SetElements for given set and adds them to the local allowList.
-func (manager *NFTablesManager) recoverExistingSetEntries(nftSet *nftables.Set) (int, error) {
-	existingEntries, err := manager.nlInterface.GetSetElements(nftSet)
+func (m *NFTablesManager) recoverExistingSetEntries(nftSet *nftables.Set) (int, error) {
+	existingEntries, err := m.nlInterface.GetSetElements(nftSet)
 	if err != nil {
 		return 0, err
 	}
 
 	for _, setEntry := range existingEntries {
-		allowListEntry := manager.allowRoutePool.Get().(*allowRoute)
+		allowListEntry := m.allowRoutePool.Get().(*allowRoute)
 
 		allowListEntry.ipAddress = net.IP(setEntry.Key)
 		allowListEntry.validUnitl = time.Now().Add(330 * time.Second)
 
-		manager.allowList[allowListEntry.ipAddress.String()] = allowListEntry
+		m.allowList[allowListEntry.ipAddress.String()] = allowListEntry
 	}
 
 	return len(existingEntries), nil
@@ -501,25 +489,31 @@ func (manager *NFTablesManager) recoverExistingSetEntries(nftSet *nftables.Set) 
 
 // This function is a special handler function managing the current allowed entries
 // in nftables. This function expects to run as singleton go-routine.
-func (manager *NFTablesManager) manageAllowList() {
+func (m *NFTablesManager) manageAllowList() {
 	gcTicker := time.NewTicker(30 * time.Second)
 
 	for {
 		select {
-		case newBatch := <-manager.syncChannel:
+		case newBatch, ok := <-m.syncChannel:
+			// channel got closed, so the service got shut down.
+			if !ok {
+				gcTicker.Stop()
+				return
+			}
+
 			var ipv4ToAdd []nftables.SetElement
 			var ipv6ToAdd []nftables.SetElement
 			var entriesAdded []*allowRoute
 
 			for _, newEntry := range newBatch {
 				ipAsString := newEntry.ipAddress.String()
-				existingRoute, exists := manager.allowList[ipAsString]
+				existingRoute, exists := m.allowList[ipAsString]
 
 				if exists {
 					if existingRoute.validUnitl.Before(newEntry.validUnitl) {
 						existingRoute.validUnitl = newEntry.validUnitl
 					}
-					manager.allowRoutePool.Put(newEntry)
+					m.allowRoutePool.Put(newEntry)
 					continue
 				}
 
@@ -529,32 +523,32 @@ func (manager *NFTablesManager) manageAllowList() {
 					ipv6ToAdd = append(ipv6ToAdd, nftables.SetElement{Key: newEntry.ipAddress})
 				} else {
 					log.Errorf("Received invalid ip address: %v", newEntry.ipAddress)
-					manager.allowRoutePool.Put(newEntry)
+					m.allowRoutePool.Put(newEntry)
 					continue
 				}
 
-				manager.allowList[ipAsString] = newEntry
+				m.allowList[ipAsString] = newEntry
 				entriesAdded = append(entriesAdded, newEntry)
 			}
 
 			if len(ipv4ToAdd) > 0 {
-				manager.nlInterface.SetAddElements(manager.ipv4AllowSet, ipv4ToAdd)
+				m.nlInterface.SetAddElements(m.ipv4AllowSet, ipv4ToAdd)
 			}
 
 			if len(ipv6ToAdd) > 0 {
-				manager.nlInterface.SetAddElements(manager.ipv6AllowSet, ipv6ToAdd)
+				m.nlInterface.SetAddElements(m.ipv6AllowSet, ipv6ToAdd)
 			}
 
 			if len(ipv4ToAdd) > 0 || len(ipv6ToAdd) > 0 {
-				if err := manager.nlInterface.Flush(); err != nil {
+				if err := m.nlInterface.Flush(); err != nil {
 					log.Errorf("Writing to NFTables failed: %v", err)
 					nftablesFlushErrorsTotal.Inc()
 
 					// As the flush failed, we have to remove the entries that we couldn't flush again.
 					// The manager.ipv4AllowSet/ipv6AllowSet are only buffers, which get flushed either way, so nothing to do here.
 					for _, entryToRemove := range entriesAdded {
-						delete(manager.allowList, entryToRemove.ipAddress.String())
-						manager.allowRoutePool.Put(entryToRemove)
+						delete(m.allowList, entryToRemove.ipAddress.String())
+						m.allowRoutePool.Put(entryToRemove)
 					}
 				} else {
 					ipv4AllowListEntries.Add(float64(len(ipv4ToAdd)))
@@ -571,7 +565,7 @@ func (manager *NFTablesManager) manageAllowList() {
 			now := time.Now()
 			log.Debug("Executing NFTables GC")
 
-			for _, listEntry := range manager.allowList {
+			for _, listEntry := range m.allowList {
 				if now.After(listEntry.validUnitl) {
 					if len(listEntry.ipAddress) == net.IPv4len {
 						ipv4ToDelete = append(ipv4ToDelete, nftables.SetElement{Key: listEntry.ipAddress})
@@ -585,21 +579,21 @@ func (manager *NFTablesManager) manageAllowList() {
 			}
 
 			if len(ipv4ToDelete) > 0 {
-				manager.nlInterface.SetDeleteElements(manager.ipv4AllowSet, ipv4ToDelete)
+				m.nlInterface.SetDeleteElements(m.ipv4AllowSet, ipv4ToDelete)
 			}
 
 			if len(ipv6ToDelete) > 0 {
-				manager.nlInterface.SetDeleteElements(manager.ipv6AllowSet, ipv6ToDelete)
+				m.nlInterface.SetDeleteElements(m.ipv6AllowSet, ipv6ToDelete)
 			}
 
 			if len(ipv4ToDelete) > 0 || len(ipv6ToDelete) > 0 {
-				if err := manager.nlInterface.Flush(); err != nil {
+				if err := m.nlInterface.Flush(); err != nil {
 					log.Errorf("Writing to NFTables failed (lists might be out of sync): %v", err)
 					nftablesFlushErrorsTotal.Inc()
 				} else {
 					for _, entryToDelete := range entriesToDelete {
-						delete(manager.allowList, entryToDelete.ipAddress.String())
-						manager.allowRoutePool.Put(entryToDelete)
+						delete(m.allowList, entryToDelete.ipAddress.String())
+						m.allowRoutePool.Put(entryToDelete)
 					}
 
 					ipv4AllowListEntries.Sub(float64(len(ipv4ToDelete)))
@@ -610,6 +604,16 @@ func (manager *NFTablesManager) manageAllowList() {
 			}
 		}
 	}
+}
+
+func (m *NFTablesManager) Startup() error {
+	go m.manageAllowList()
+	return nil
+}
+
+func (m *NFTablesManager) Shutdown() error {
+	close(m.syncChannel)
+	return nil
 }
 
 func NewNFTablesManager(config *parsedConfig) (*NFTablesManager, error) {
@@ -648,8 +652,6 @@ func NewNFTablesManager(config *parsedConfig) (*NFTablesManager, error) {
 	ipv4AllowListAddedTotal.Add(float64(ipv4RecoveredEntriesCount))
 	ipv6AllowListEntries.Add(float64(ipv6RecoveredEntriesCount))
 	ipv6AllowListAddedTotal.Add(float64(ipv6RecoveredEntriesCount))
-
-	go manager.manageAllowList()
 
 	return manager, nil
 }

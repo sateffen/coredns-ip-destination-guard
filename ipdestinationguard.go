@@ -13,6 +13,8 @@ import (
 // like IPTables or BGP based ones
 type DestinationGuardManager interface {
 	AddRoutes(ips []net.IP, ttl uint32)
+	Startup() error
+	Shutdown() error
 }
 
 // The actual destination guard struct for this plugin.
