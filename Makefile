@@ -79,6 +79,7 @@ testbuild: GOFLAGS = "-buildmode=pie -trimpath -mod=readonly -modcacherw"
 testbuild: testbuild/src
 	@echo " > Building CoreDNS with ipdestinationguard plugin (this folder)..."
 	@rm -f testbuild/coredns
+	@cd testbuild/src/coredns && go mod tidy
 	@cd testbuild/src/coredns && make coredns
 	@mv testbuild/src/coredns/coredns testbuild/coredns
 	@echo " > Done..."
