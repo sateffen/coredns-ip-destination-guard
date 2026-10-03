@@ -176,9 +176,95 @@ func TestWriteMsg_WithMixedAandAAAA(t *testing.T) {
 		t.Fatalf("Expected 2 IPs, got %d", len(mockManager.capturedIPs))
 	}
 
-	// Note: TTL is taken from last record (AAAA in this case)
-	if mockManager.capturedTTL != 600 {
-		t.Errorf("Expected TTL 600 (from AAAA record), got %d", mockManager.capturedTTL)
+	// Note: TTL is the minimum across all A/AAAA records
+	if mockManager.capturedTTL != 300 {
+		t.Errorf("Expected TTL 300 (minimum of both records), got %d", mockManager.capturedTTL)
+	}
+}
+
+func TestWriteMsg_MinimumTTL(t *testing.T) {
+	tests := []struct {
+		name        string
+		ttls        []uint32
+		expectedTTL uint32
+	}{
+		{
+			name:        "single record",
+			ttls:        []uint32{300},
+			expectedTTL: 300,
+		},
+		{
+			name:        "multiple equal TTLs",
+			ttls:        []uint32{300, 300},
+			expectedTTL: 300,
+		},
+		{
+			name:        "minimum in middle",
+			ttls:        []uint32{86400, 60, 3600},
+			expectedTTL: 60,
+		},
+		{
+			name:        "minimum last",
+			ttls:        []uint32{86400, 3600, 60},
+			expectedTTL: 60,
+		},
+		{
+			name:        "minimum first",
+			ttls:        []uint32{60, 3600, 86400},
+			expectedTTL: 60,
+		},
+		{
+			name:        "zero TTL is the minimum",
+			ttls:        []uint32{300, 0, 86400},
+			expectedTTL: 0,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			mockManager := &MockDestinationGuardManager{}
+			mockWriter := &MockResponseWriter{}
+			parser := NewResponseParser(mockWriter, mockManager)
+
+			msg := new(dns.Msg)
+			for i, ttl := range tt.ttls {
+				if i%2 == 1 {
+					msg.Answer = append(msg.Answer, &dns.AAAA{
+						Hdr: dns.RR_Header{
+							Name:   fmt.Sprintf("example%d.com.", i),
+							Rrtype: dns.TypeAAAA,
+							Class:  dns.ClassINET,
+							Ttl:    ttl,
+						},
+						AAAA: net.ParseIP("2001:db8::1"),
+					})
+				} else {
+					msg.Answer = append(msg.Answer, &dns.A{
+						Hdr: dns.RR_Header{
+							Name:   fmt.Sprintf("example%d.com.", i),
+							Rrtype: dns.TypeA,
+							Class:  dns.ClassINET,
+							Ttl:    ttl,
+						},
+						A: net.ParseIP("192.168.1.1"),
+					})
+				}
+			}
+
+			err := parser.WriteMsg(msg)
+
+			if err != nil {
+				t.Fatalf("Unexpected error: %v", err)
+			}
+
+			if mockManager.callCount != 1 {
+				t.Errorf("Expected AddRoutes to be called 1 time, got %d", mockManager.callCount)
+			}
+
+			if mockManager.capturedTTL != tt.expectedTTL {
+				t.Errorf("Expected minimum TTL %d, got %d", tt.expectedTTL, mockManager.capturedTTL)
+			}
+		})
 	}
 }
 
