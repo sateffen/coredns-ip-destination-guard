@@ -21,6 +21,6 @@ Once you're happy with your changes, tests are passing, you can create a testbui
 
 ## Using LLMs
 
-In short: Don't let them run things. LLMs are nice for code reviews and for finding potential bugs or issues while you're developing instead of sleeping at night. But whenever LLM agents start developing, they'll want to test their changes, start the testbuild, aaaaand disconnect themselves, because the IP Destination Guard does exactly what it's supposed to do: It blocks outgoing connections.
+In short: Don't let them run things. LLMs are nice for code reviews and for finding potential bugs or issues while you're developing instead of sleeping at night. But whenever LLM agents start developing, they'll want to test their changes, start the testbuild, aaaaand disconnect themselves, because the IP Destination Guard does exactly what it's supposed to do: It blocks new outgoing connections. (yes, existing connections stay alive, but at some point they want to open a new connection and break randomly)
 
 If you really want to use an LLM, stick to static tasks: reviews, refactors, writing unit tests. Never let it execute the testbuild. Additionally, actually use the devcontainer, because an LLM with root permissions on your system, actively working on your firewall... What can go wrong?
